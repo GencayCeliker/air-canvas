@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "air-canvas"
+version = "1.0.0"
+description = "Draw in the air with your finger: webcam hand tracking, shape recognition and Turkish voice commands."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Gencay Çeliker" }]
+keywords = ["opencv", "mediapipe", "hand-tracking", "computer-vision", "drawing", "turkish"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "mediapipe>=0.10.14",
+]
+
+[project.optional-dependencies]
+voice = [
+    "edge-tts>=6.1",
+    "gTTS>=2.5",
+    "pygame-ce>=2.4",
+    "SpeechRecognition>=3.10",
+    "PyAudio>=0.2.13",
+    "comtypes>=1.2; sys_platform == 'win32'",
+]
+dev = ["pytest>=7"]
+
+[project.scripts]
+air-canvas = "air_canvas.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/GencayCeliker/air-canvas"
+
+[tool.setuptools]
+packages = ["air_canvas"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
