@@ -1,3 +1,5 @@
+**English** | [Türkçe](README.tr.md)
+
 # Air Canvas
 
 **Draw in the air with your finger.** Air Canvas tracks your hand through an ordinary webcam, turns your index finger into a brush, cleans up rough circles, rectangles and triangles into perfect shapes, and understands Turkish voice commands.
