@@ -24,6 +24,9 @@ def main(argv=None) -> int:
     parser.add_argument("--board", action="store_true", help="start in whiteboard mode instead of camera view")
     parser.add_argument("--no-voice", action="store_true", help="disable spoken feedback")
     parser.add_argument("--no-shape-assist", action="store_true", help="start with shape recognition off")
+    parser.add_argument("--windowed", action="store_true", help="start in a window instead of fullscreen (toggle: F)")
+    parser.add_argument("--design", metavar="TEXT",
+                        help="start with a 3D design request, e.g. --design \"dron kolu\"")
     parser.add_argument("-v", "--verbose", action="store_true", help="show debug logs")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
@@ -35,9 +38,12 @@ def main(argv=None) -> int:
     canvas.board_mode = args.board
     canvas.voice_feedback = not args.no_voice
     canvas.shape_assist = not args.no_shape_assist
+    canvas.fullscreen = not args.windowed
     if not canvas.available:
         print(canvas._unavailable_message(), file=sys.stderr)
         return 1
+    if args.design:
+        canvas.queue_design(args.design)
 
     print(canvas.run())
     return 0
