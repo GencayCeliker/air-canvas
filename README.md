@@ -2,6 +2,10 @@
 
 # Air Canvas
 
+[![tests](https://github.com/GencayCeliker/air-canvas/actions/workflows/tests.yml/badge.svg)](https://github.com/GencayCeliker/air-canvas/actions/workflows/tests.yml)
+![Python](https://img.shields.io/badge/python-3.9%2B-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Draw in the air with your finger.** Air Canvas tracks your hand through an ordinary webcam, turns your index finger into a brush, cleans up rough circles, rectangles and triangles into perfect shapes, and understands Turkish voice commands.
 
 <!-- TODO: add demo GIF, e.g. docs/demo.gif -->
@@ -91,6 +95,41 @@ pytest
 ```
 
 The suite covers shape classification, undo/redo, compositing, toolbar hit-testing, gesture timing, voice-command parsing and saving — all with synthetic input, no camera needed.
+
+## Project layout
+
+```
+air_canvas/
+  canvas.py      Drawing engine: hand tracking, gestures, strokes, shapes, toolbar, saving
+  speech.py      Turkish voice feedback (Edge TTS → gTTS → Turkish Windows voice)
+  llm.py         Optional local LLM client for voice-note summaries (LM Studio / Ollama)
+  config.py      Default paths, overridable with environment variables
+  __main__.py    Command-line app (air-canvas)
+tests/           pytest suite, synthetic input only
+```
+
+## Troubleshooting
+
+| Problem | Fix |
+| --- | --- |
+| "Kamera açılamadı" (camera could not be opened) | Close other apps using the camera (Teams, Zoom, browser tabs) or try `--camera 1`. |
+| `pip` cannot find `mediapipe` | Your Python version may be too new for MediaPipe. Use Python 3.10–3.12. |
+| No sound, or an English accent | Install the voice extras (`pip install -e ".[voice]"`). Edge TTS and gTTS need internet; offline, add the Turkish voice in **Windows Settings → Time & language → Speech**. |
+| Voice commands are not recognized | Speech recognition uses Google's free web API and needs internet and a working microphone (`PyAudio`). |
+| Hand model download fails | Download [`hand_landmarker.task`](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task) manually and point `AIR_CANVAS_MODEL` to it. |
+| Lines are shaky | Use even lighting and keep your hand 40–80 cm from the camera. |
+
+## Roadmap
+
+- [ ] Demo GIF
+- [ ] English voice commands and UI
+- [ ] Two-hand gestures (zoom / move the canvas)
+- [ ] Offline speech recognition (faster-whisper)
+- [ ] Export as SVG
+
+## Contributing
+
+Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
