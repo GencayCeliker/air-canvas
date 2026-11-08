@@ -21,6 +21,7 @@ dependencies = [
     "numpy>=1.24",
     "opencv-python>=4.8",
     "mediapipe>=0.10.14",
+    "manifold3d>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +33,7 @@ voice = [
     "PyAudio>=0.2.13",
     "comtypes>=1.2; sys_platform == 'win32'",
 ]
+ai = ["anthropic>=2.0"]
 dev = ["pytest>=7"]
 
 [project.scripts]

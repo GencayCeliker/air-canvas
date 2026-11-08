@@ -75,6 +75,15 @@ BRUSH_MIN, BRUSH_MAX, BRUSH_DEFAULT, BRUSH_STEP = 4, 40, 15, 3
 SMOOTHING = 0.35            # Titreme azaltma (önceki noktanın ağırlığı)
 BOARD_BG = (32, 28, 28)     # Tahta modu arka planı (BGR)
 
+# 3D tasarım rehberi: solda yarı saydam model, sağda adım paneli (x1, y1, x2, y2)
+GUIDE_RECT = (20, DRAW_MIN_Y + 40, 860, HUD_TOP - 8)
+PANEL_RECT = (872, DRAW_MIN_Y + 40, FRAME_W - 10, HUD_TOP - 8)
+GUIDE_ALPHA = 0.55
+
+# Tasarım modu sesli komutları
+QUESTION_WORDS = {"nasıl", "nasil", "neden", "niye", "niçin", "hangi", "kaç", "kac", "nedir", "ne",
+                  "mı", "mi", "mu", "mü", "nerede", "nereye"}
+
 PALETTE: List[Tuple[str, Tuple[int, int, int]]] = [
     ("MAVI", (255, 0, 0)),
     ("YESIL", (0, 255, 0)),
@@ -130,12 +139,15 @@ class AirCanvas:
         save_dir: Optional[str] = None,
         camera_index: int = 0,
         model_path: Optional[str] = None,
+        assistant=None,
     ):
         """
         speaker: ``say(text)`` ve ``is_busy()`` metotları olan bir ses motoru.
                  Verilmezse ilk ihtiyaçta yerleşik Türkçe motor (Edge TTS → gTTS) kurulur.
         llm:     ``generate(prompt, system=..., temperature=..., max_tokens=...)`` ve
                  ``available`` özelliği olan bir istemci. Verilmezse LM Studio / Ollama denenir.
+        assistant: ``design(text)``, ``ask(...)``, ``review(...)`` metotları olan tasarım asistanı.
+                 Verilmezse ilk ihtiyaçta ``ai.DesignAssistant`` kurulur (Claude → yerel LLM → şablon).
         """
         self.available = False
         self.detector = None
@@ -190,6 +202,19 @@ class AirCanvas:
         self._last_shape_time = 0.0
         self._session_saves = 0
 
+        # Pencere ve 3D tasarım asistanı
+        self.fullscreen = True
+        self._window_dirty = False
+        self.design = None                 # design.Design
+        self.design_step = 0               # -1: genel görünüm, 0..n-1: parça adımı
+        self.show_guide = True
+        self.design_busy = False
+        self.ai_busy = False
+        self.last_export_dir = ""
+        self._guide: Optional[Tuple[np.ndarray, np.ndarray]] = None   # (BGR, maske)
+        self._assistant = assistant
+        self._pending_design = ""
+
         self.buttons = self._build_toolbar()
 
         self.save_dir = save_dir or default_save_dir()
@@ -208,6 +233,10 @@ class AirCanvas:
     def stop(self) -> None:
         """Açık çizim penceresini kapatır (uygulama kapanışında çağrılabilir)."""
         self._stop_event.set()
+
+    def queue_design(self, request: str) -> None:
+        """Çizim penceresi açılınca hazırlanacak bir 3D tasarım isteği bırakır."""
+        self._pending_design = (request or "").strip()
 
     def start_async(self, on_finish: Optional[Callable[[str], None]] = None) -> str:
         """
@@ -280,9 +309,10 @@ class AirCanvas:
                 self._speaker_failed = True
         return self._speaker
 
-    def _say_async(self, text: str) -> None:
+    def _say_async(self, text: str, wait: bool = False) -> None:
         """Kamera FPS'ini düşürmeden arka planda Türkçe sesli geri bildirim verir.
-        Zaten konuşuluyorsa yeni mesaj atlanır (sesler üst üste binmez)."""
+        Zaten konuşuluyorsa yeni mesaj atlanır (sesler üst üste binmez). ``wait=True`` ise
+        atlanmaz; önceki konuşmanın bitmesi (en fazla 30 sn) beklenir — tasarım adımları için."""
         if not self.voice_feedback or not text:
             return
 
@@ -291,6 +321,13 @@ class AirCanvas:
             try:
                 if not speaker.is_busy():
                     speaker.say(text)
+                elif wait:
+                    def _later():
+                        deadline = time.time() + 30
+                        while speaker.is_busy() and time.time() < deadline:
+                            time.sleep(0.2)
+                        speaker.say(text)
+                    threading.Thread(target=_later, daemon=True).start()
                 return
             except Exception as exc:
                 log.warning("[AirCanvas] Ses motoru hatası: %s", exc)
@@ -388,6 +425,29 @@ class AirCanvas:
         def has(*keywords: str) -> bool:
             return any(tok.startswith(kw) for tok in tokens for kw in keywords)
 
+        # ── 3D tasarım komutları ──
+        if self.design is not None:
+            if has("tasar") and has("kapat", "bitir", "iptal", "sil"):
+                return [("design_close", None)], "Tasarım kapatıldı."
+            if has("sonraki", "sıradaki", "siradaki", "devam") or "ileri git" in low:
+                return [("design_next", None)], ""
+            if has("önceki", "onceki") or "geri dön" in low or "geri don" in low:
+                return [("design_prev", None)], ""
+            if has("tekrar"):
+                return [("design_repeat", None)], ""
+            if has("genel", "bütün", "butun"):
+                return [("design_overview", None)], ""
+            if has("rehber", "kılavuz", "kilavuz"):
+                return [("guide_toggle", None)], ""
+            if has("kontrol", "değerlendir", "degerlendir") or "nasıl olmuş" in low or "nasil olmus" in low:
+                return [("design_review", None)], "Çizimine bakıyorum."
+        if has("stl", "yazdır", "yazdir") or "dışa aktar" in low or "disa aktar" in low or "baskıya" in low:
+            return [("design_export", None)], ""
+        from .design import TEMPLATE_KEYWORDS
+        if (has("tasar", "modelle") or "3d" in tokens or "üç boyut" in low or "uc boyut" in low
+                or has(*TEMPLATE_KEYWORDS)):
+            return [("design_request", text)], "Tasarımı hazırlıyorum."
+
         if "hepsini sil" in low or "tuvali sil" in low or has("temizle"):
             return [("clear", None)], "Tuval temizlendi."
         if "geri al" in low or has("iptal"):
@@ -396,6 +456,9 @@ class AirCanvas:
             return [("redo", None)], "Adım yinelendi."
         if has("kaydet"):
             return [("save", None)], "Çizim kaydediliyor."
+        # "Duvar kalınlığı kaç olmalı?" bir sorudur, "kalın" fırça komutu değil.
+        if "?" in text or QUESTION_WORDS.intersection(tokens):
+            return [("ask", text)], "Düşünüyorum..."
 
         actions: List[Tuple[str, Any]] = []
         messages: List[str] = []
@@ -434,6 +497,9 @@ class AirCanvas:
                 break
 
         if not actions:
+            # Tasarım açıkken veya soru sorulduğunda konuşma AI'a soru olarak gider.
+            if self.design is not None or "?" in text or QUESTION_WORDS.intersection(tokens):
+                return [("ask", text)], "Düşünüyorum..."
             return [], "Sesli notunuz kaydedildi."
         return actions, ". ".join(messages) + "."
 
@@ -442,7 +508,7 @@ class AirCanvas:
         if self.voice_listening:
             return
         self.voice_listening = True
-        self.assistant_tip = "Asistan dinliyor... Lutfen konusun (4 sn)"
+        self.assistant_tip = "Asistan dinliyor... Konusun (orn. 'dron tasarla', 'sonraki', 'kontrol et')"
 
         def _worker():
             try:
@@ -452,7 +518,7 @@ class AirCanvas:
                     recognizer = sr.Recognizer()
                     with sr.Microphone() as source:
                         recognizer.adjust_for_ambient_noise(source, duration=0.3)
-                        audio = recognizer.listen(source, timeout=4, phrase_time_limit=6)
+                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=12)
                     spoken_text = recognizer.recognize_google(audio, language="tr-TR")
                 except Exception as exc:
                     log.debug("[AirCanvas] SpeechRecognition dinleme uyarısı: %s", exc)
@@ -467,8 +533,10 @@ class AirCanvas:
                 if actions:
                     for action in actions:
                         self._actions.put(action)
-                    self.assistant_tip = message
-                    self._say_async(message)
+                    if message:
+                        self.assistant_tip = message
+                        if actions[0][0] not in ("ask", "design_request", "design_review"):
+                            self._say_async(message)   # Uzun işlerde sonuç ayrıca seslendirilir
                     return
 
                 summary = self._summarize_speech(spoken_text)
@@ -532,6 +600,35 @@ class AirCanvas:
             self._save()
         elif action == "voice":
             self._listen_and_summarize_async()
+        elif action == "fullscreen_toggle":
+            self.fullscreen = not self.fullscreen
+            self._window_dirty = True
+        # ── 3D tasarım ──
+        elif action == "design_request":
+            self._start_design(str(value))
+        elif action == "design_loaded":
+            self._on_design_loaded(*value)
+        elif action == "design_next":
+            self._design_goto(self.design_step + 1)
+        elif action == "design_prev":
+            self._design_goto(self.design_step - 1)
+        elif action == "design_repeat":
+            self._design_goto(self.design_step)
+        elif action == "design_overview":
+            self._design_goto(-1)
+        elif action == "guide_toggle":
+            self.show_guide = not self.show_guide
+            self.assistant_tip = f"3D rehber {'acik' if self.show_guide else 'gizli'}."
+        elif action == "design_export":
+            self._export_design()
+        elif action == "design_review":
+            self._review_drawing()
+        elif action == "design_close":
+            self.design = None
+            self._guide = None
+            self.assistant_tip = "Tasarim kapatildi."
+        elif action == "ask":
+            self._ask_async(str(value))
 
     def _press_button(self, button_id: str, from_gesture: bool = False) -> None:
         """Üst menü butonunu uygular; el hareketiyle basılan butonlarda bekleme süresi uygulanır."""
@@ -558,12 +655,163 @@ class AirCanvas:
             "b": "board_toggle", "h": "hud_toggle", "a": "shape_toggle",
             "+": "brush_up", "=": "brush_up", "-": "brush_down",
         }
+        key_actions.update({
+            "f": "fullscreen_toggle", "n": "design_next", "p": "design_prev", "r": "design_repeat",
+            "g": "guide_toggle", "x": "design_export", "k": "design_review",
+        })
         if char in key_actions:
             self._perform(key_actions[char])
         elif char == "e":
             self._perform("pen" if self.eraser else "eraser")
         elif char.isdigit() and 1 <= int(char) <= len(PALETTE):
             self._perform("color", int(char) - 1)
+
+    # ─── 3D tasarım asistanı ──────────────────────────────────────────────────
+
+    def _get_assistant(self):
+        if self._assistant is None:
+            from .ai import DesignAssistant
+            self._assistant = DesignAssistant(local_llm=self._get_llm)
+        return self._assistant
+
+    def _start_design(self, request: str) -> None:
+        """İsteği arka planda tasarıma çevirir; sonuç eylem kuyruğuyla döngüye döner."""
+        if self.design_busy:
+            self.assistant_tip = "Bir tasarim zaten hazirlaniyor, lutfen bekleyin."
+            return
+        self.design_busy = True
+        self.assistant_tip = f"AI tasarliyor: {request[:70]} ..."
+        self._say_async("Tamam, tasarlıyorum. Bu biraz sürebilir.")
+
+        def _worker():
+            design, source = None, ""
+            try:
+                design, source = self._get_assistant().design(request)
+            except Exception as exc:
+                log.error("[AirCanvas] Tasarım üretilemedi: %s", exc)
+            finally:
+                self.design_busy = False
+            self._actions.put(("design_loaded", (design, source, request)))
+
+        threading.Thread(target=_worker, daemon=True, name="AirCanvasDesign").start()
+
+    def _on_design_loaded(self, design, source: str, request: str) -> None:
+        if design is None:
+            from .design import TEMPLATE_HINT
+            msg = ("Bunu tasarlayamadım. Claude bağlı değilken şunları yapabilirim: "
+                   f"{TEMPLATE_HINT}.")
+            self.assistant_tip = msg
+            self._say_async(msg, wait=True)
+            return
+        self.design = design
+        self.design_step = 0
+        self.show_guide = True
+        self._refresh_guide()
+        failed = f" Üretilemeyen parça: {', '.join(design.failed_parts)}." if design.failed_parts else ""
+        self.assistant_tip = f"Tasarim hazir ({source}): {design.name}. 'Sonraki' ile ilerleyin, 'STL' ile kaydedin."
+        self._say_async(f"{design.name} hazır. {design.summary}{failed} {design.spoken_step(0)}", wait=True)
+
+    def _refresh_guide(self) -> None:
+        if self.design is None:
+            self._guide = None
+            return
+        from .design import render_preview
+        x1, y1, x2, y2 = GUIDE_RECT
+        highlight = self.design_step if self.design_step >= 0 else None
+        img = render_preview(self.design, x2 - x1, y2 - y1, highlight=highlight)
+        self._guide = (img, img.any(axis=2))
+
+    def _design_goto(self, step: int) -> None:
+        if self.design is None:
+            self.assistant_tip = "Acik bir tasarim yok. Ornek: 'dron tasarla' veya 'M3 vida ciz'."
+            self._say_async("Önce bir tasarım isteyin, örneğin dron tasarla.")
+            return
+        last = len(self.design.parts) - 1
+        if step > last:
+            msg = "Tüm parçaları bitirdik. STL deyince dosyaları baskıya hazır kaydederim."
+            if self.design.print_tips:
+                msg += " İpucu: " + self.design.print_tips[0]
+            self.assistant_tip = msg
+            self._say_async(msg, wait=True)
+            return
+        self.design_step = max(-1, step)
+        self._refresh_guide()
+        if self.design_step < 0:
+            self.assistant_tip = f"Genel gorunum: {self.design.name}"
+            self._say_async(self.design.overview_text(), wait=True)
+        else:
+            self.assistant_tip = self.design.step_text(self.design_step).splitlines()[0]
+            self._say_async(self.design.spoken_step(self.design_step), wait=True)
+
+    def _export_design(self) -> str:
+        if self.design is None:
+            self.assistant_tip = "Disa aktarilacak tasarim yok. Once bir sey tasarlatin."
+            self._say_async("Önce bir tasarım isteyin.")
+            return ""
+        try:
+            from .design import export_design
+            folder = export_design(self.design, os.path.join(self.save_dir, "3D"))
+        except Exception as exc:
+            log.error("[AirCanvas] STL dışa aktarılamadı: %s", exc)
+            self.assistant_tip = "STL kaydedilemedi."
+            self._say_async("STL dosyalarını kaydedemedim.")
+            return ""
+        self.last_export_dir = folder
+        count = sum(1 for _, t in self.design.meshes if len(t))
+        self.assistant_tip = f"STL kaydedildi ({count} parca): {folder}"
+        self._say_async(f"{count} parça STL olarak kaydedildi. Talimatlar da klasörde.", wait=True)
+        return folder
+
+    def _ask_async(self, question: str) -> None:
+        if self.ai_busy:
+            return
+        self.ai_busy = True
+        design, step = self.design, self.design_step
+
+        def _worker():
+            try:
+                answer = self._get_assistant().ask(question, design, step)
+            except Exception as exc:
+                log.error("[AirCanvas] AI sorusu başarısız: %s", exc)
+                answer = ""
+            finally:
+                self.ai_busy = False
+            if not answer:
+                answer = "Şu an yapay zekâya ulaşamıyorum. Claude anahtarı veya yerel model gerekiyor."
+            self.voice_summary = f"Soru: {question}"
+            self.assistant_tip = answer
+            self._say_async(answer, wait=True)
+
+        threading.Thread(target=_worker, daemon=True, name="AirCanvasAsk").start()
+
+    def _review_drawing(self) -> None:
+        """Ekran görüntüsünü (çizim + rehber) AI'a gösterip geri bildirim ister."""
+        if self._last_view is None or self.ai_busy:
+            return
+        view = self._last_view
+        scale = 1024 / view.shape[1]
+        small = cv2.resize(view, (1024, int(view.shape[0] * scale))) if scale < 1 else view
+        ok, buf = cv2.imencode(".png", small)
+        if not ok:
+            return
+        self.ai_busy = True
+        self.assistant_tip = "Cizimine bakiyorum..."
+        design, step, png = self.design, self.design_step, buf.tobytes()
+
+        def _worker():
+            try:
+                answer = self._get_assistant().review(png, design, step)
+            except Exception as exc:
+                log.error("[AirCanvas] Çizim değerlendirilemedi: %s", exc)
+                answer = ""
+            finally:
+                self.ai_busy = False
+            if not answer:
+                answer = "Çizimi değerlendirmek için Claude bağlantısı gerekiyor."
+            self.assistant_tip = answer
+            self._say_async(answer, wait=True)
+
+        threading.Thread(target=_worker, daemon=True, name="AirCanvasReview").start()
 
     # ─── Geçmiş (geri al / yinele) ────────────────────────────────────────────
 
@@ -1059,6 +1307,12 @@ class AirCanvas:
     def _compose(self, frame: np.ndarray) -> np.ndarray:
         """Tuvali kamera görüntüsü (veya tahta) üzerine opak şekilde yerleştirir."""
         view = np.full_like(frame, BOARD_BG) if self.board_mode else frame.copy()
+        if self.design is not None and self.show_guide and self._guide is not None:
+            # 3D rehber kullanıcının çizgilerinin altında, yarı saydam durur (üzerinden çizilebilir).
+            guide, gmask = self._guide
+            x1, y1, x2, y2 = GUIDE_RECT
+            region = view[y1:y2, x1:x2]
+            region[gmask] = (region[gmask] * (1 - GUIDE_ALPHA) + guide[gmask] * GUIDE_ALPHA).astype(np.uint8)
         mask = self.canvas.any(axis=2)
         view[mask] = self.canvas[mask]
         return view
@@ -1103,6 +1357,9 @@ class AirCanvas:
         if self._last_shape_label and (time.time() - self._last_shape_time < 3.0):
             cv2.putText(img, self._last_shape_label, (24, DRAW_MIN_Y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 255, 120), 2)
 
+        if self.design is not None:
+            self._draw_design_panel(img)
+
         if not self.show_hud:
             return
 
@@ -1112,17 +1369,63 @@ class AirCanvas:
 
         tip_ascii = self._tr_ascii(self.assistant_tip)
         summary_ascii = self._tr_ascii(self.voice_summary)
-        cv2.putText(img, f"ASISTAN: {tip_ascii[:105]}", (22, HUD_TOP + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 200), 2)
-        cv2.putText(img, f"SESLI NOT: {summary_ascii[:105]}", (22, HUD_TOP + 62), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 220, 90), 2)
-        cv2.putText(
-            img,
-            "[V] Sesli | [Z/Y] Geri/Ileri | [C] Temizle | [S] Kaydet | [B] Tahta | [E] Silgi | [+/-] Kalinlik | [1-6] Renk | [H] Panel | [Q] Cikis",
-            (22, HUD_TOP + 92),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.47,
-            (210, 215, 230),
-            1,
+        busy = " ..." if (self.design_busy or self.ai_busy) and int(time.time() * 2) % 2 else ""
+        cv2.putText(img, f"ASISTAN: {tip_ascii[:105]}{busy}", (22, HUD_TOP + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.56, (0, 255, 200), 2)
+        cv2.putText(img, f"SESLI NOT: {summary_ascii[:105]}", (22, HUD_TOP + 52), cv2.FONT_HERSHEY_SIMPLEX, 0.56, (255, 220, 90), 2)
+        hints = (
+            "[V] Sesli komut  |  [Z/Y] Geri/Ileri  |  [C] Temizle  |  [S] Kaydet  |  [B] Tahta  |  [E] Silgi  |  "
+            "[+/-] Kalinlik  |  [1-6] Renk  |  [H] Panel  |  [Q] Cikis",
+            "3D: 'dron tasarla', 'M3 vida ciz'...  |  [N/P] Sonraki/Onceki adim  |  [R] Tekrar  |  [G] Rehber  |  "
+            "[X] STL kaydet  |  [K] Kontrol et  |  [F] Tam ekran",
         )
+        for i, line in enumerate(hints):
+            cv2.putText(img, line, (22, HUD_TOP + 76 + i * 18), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (210, 215, 230), 1)
+
+    @staticmethod
+    def _wrap(text: str, width: int) -> List[str]:
+        lines: List[str] = []
+        for paragraph in (text or "").splitlines():
+            current = ""
+            for word in paragraph.split():
+                if current and len(current) + 1 + len(word) > width:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = f"{current} {word}".strip()
+            if current:
+                lines.append(current)
+        return lines
+
+    def _draw_design_panel(self, img: np.ndarray) -> None:
+        """Sağ tarafta tasarım adı, parça listesi ve geçerli adımın talimatı."""
+        design = self.design
+        x1, y1, x2, y2 = PANEL_RECT
+        roi = img[y1:y2, x1:x2]
+        cv2.addWeighted(np.full_like(roi, (36, 26, 22)), 0.82, roi, 0.18, 0, dst=roi)
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 200, 255), 1)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        y = y1 + 24
+        cv2.putText(img, self._tr_ascii(design.name)[:30], (x1 + 10, y), font, 0.62, (0, 220, 255), 2)
+        y += 8
+        for i, part in enumerate(design.parts):
+            y += 20
+            if y > y1 + 190:
+                cv2.putText(img, "...", (x1 + 14, y), font, 0.45, (200, 200, 200), 1)
+                break
+            active = i == self.design_step
+            qty = design.quantity(i)
+            label = f"{i + 1}. {self._tr_ascii(part['name'])}" + (f" x{qty}" if qty > 1 else "")
+            cv2.putText(img, ("> " if active else "  ") + label[:34], (x1 + 10, y), font, 0.47,
+                        (40, 200, 255) if active else (190, 190, 190), 2 if active else 1)
+        y += 14
+        cv2.line(img, (x1 + 10, y), (x2 - 10, y), (90, 90, 90), 1)
+        body = (design.step_text(self.design_step) if self.design_step >= 0
+                else f"Genel gorunum.\n{design.summary}")
+        for line in self._wrap(self._tr_ascii(body), 45):
+            y += 19
+            if y > y2 - 8:
+                break
+            cv2.putText(img, line, (x1 + 10, y), font, 0.45, (235, 235, 235), 1)
 
     def _on_mouse(self, event, x, y, flags, param) -> None:
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -1174,6 +1477,17 @@ class AirCanvas:
             except queue.Empty:
                 break
 
+    def _apply_window_mode(self, win_name: str) -> None:
+        self._window_dirty = False
+        try:
+            if self.fullscreen:
+                cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+            else:
+                cv2.setWindowProperty(win_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(win_name, FRAME_W, FRAME_H)
+        except cv2.error as exc:
+            log.debug("[AirCanvas] Pencere modu değiştirilemedi: %s", exc)
+
     def _run_loop(self) -> str:
         if not self.available:
             self._try_init()
@@ -1191,9 +1505,14 @@ class AirCanvas:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
         self._reset_session()
+        if self._pending_design:
+            self._actions.put(("design_request", self._pending_design))
+            self._pending_design = ""
 
         win_name = "Air Canvas"
-        cv2.namedWindow(win_name)
+        # WINDOW_NORMAL: pencere ölçeklenebilir; OpenCV fare koordinatlarını görüntüye geri ölçekler.
+        cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
+        self._apply_window_mode(win_name)
         cv2.setMouseCallback(win_name, self._on_mouse)
 
         log.info("[AirCanvas] Çizim modu başlatıldı. Çıkış: Q/ESC, Sesli not: V, Geri al: Z.")
@@ -1223,6 +1542,8 @@ class AirCanvas:
                     self._on_hand_missing()
 
                 self._drain_actions()
+                if self._window_dirty:
+                    self._apply_window_mode(win_name)
 
                 view = self._compose(frame)
                 self._draw_hand_overlay(view)

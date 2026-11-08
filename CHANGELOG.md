@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- AI 3D design assistant: voice requests such as *"dron tasarla"* produce a printable multi-part design. Claude (structured outputs) is used first, then a local LLM, then built-in templates for bolt, nut, drone, drone arm, car, wheel, fan grill and SSD bracket.
+- Translucent shaded 3D guide under the user's ink, a step panel with sizes, and spoken step-by-step instructions (`sonraki`, `önceki`, `tekrar`, `genel`).
+- Watertight solid modelling with manifold3d and STL export: one bed-ready file per part, an assembly preview, instructions and the design as JSON.
+- The AI answers spoken questions and reviews the current drawing (`kontrol et`).
+- Fullscreen window by default. `F` toggles it, `--windowed` starts in a window, `--design` opens with a design.
+
+### Fixed
+- Running `air_canvas/__main__.py` directly no longer fails with a relative-import error.
+- Questions such as *"duvar kalınlığı kaç olmalı?"* are no longer mistaken for the *kalın* brush command.
+
 ## [1.0.0] — 2026-11-08
 
 First standalone release, extracted from the Moly/Jarvis desktop assistant.
