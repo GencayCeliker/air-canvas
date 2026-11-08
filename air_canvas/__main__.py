@@ -4,8 +4,14 @@ import argparse
 import logging
 import sys
 
-from . import __version__
-from .canvas import AirCanvas
+if __package__ in (None, ""):
+    # Dosya doğrudan çalıştırıldı (ör. ``python air_canvas/__main__.py`` ya da
+    # IDE'de "Run Python File"); göreli import'lar için paket kökünü ekle.
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from air_canvas import __version__
+from air_canvas.canvas import AirCanvas
 
 
 def main(argv=None) -> int:
