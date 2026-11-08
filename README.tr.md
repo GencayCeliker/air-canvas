@@ -22,6 +22,8 @@
 - **Geri al / yinele** (sınırlı geçmiş), silgi, altı renk, ayarlanabilir fırça, tahta modu.
 - **Kaydetme:** Çizimin şeffaf PNG'si, ekranın tam görüntüsü ve sesli notların bulunduğu bir metin dosyası.
 - **Fare desteği:** Fareyle de çizebilir, tekerlekle fırça kalınlığını değiştirebilirsin.
+- **Yapay zekâ destekli 3D tasarım asistanı:** *"dron tasarla"*, *"M3 vida çiz"* veya *"model araba yap"* de; vidadan araba modeline kadar 3D baskıya uygun bir tasarım hazırlanır. Tasarım parçalara ayrılır, üzerinden çizebileceğin yarı saydam bir 3D rehber olarak gösterilir, adım adım sesli anlatılır ve tablaya hazır STL dosyaları olarak kaydedilir.
+- **Varsayılan olarak tam ekran** (`F` ile pencereye geçilir).
 - Titremeyi azaltan yumuşatma ve kısa bir tolerans süresi sayesinde, el takibi bir an kaybolsa da çizgi kopmaz.
 
 ## Kurulum
@@ -32,6 +34,7 @@ Python 3.9+ ve bir web kamerası gerekir.
 git clone https://github.com/GencayCeliker/air-canvas.git
 cd air-canvas
 pip install -e ".[voice]"      # veya: pip install -e .   (ses özellikleri olmadan)
+pip install -e ".[ai]"         # isteğe bağlı: 3D tasarım asistanı için Claude
 ```
 
 MediaPipe el modeli (~7,5 MB) ilk açılışta otomatik indirilir.
@@ -42,6 +45,8 @@ MediaPipe el modeli (~7,5 MB) ilk açılışta otomatik indirilir.
 air-canvas                     # veya: python -m air_canvas
 air-canvas --board             # düz tahta ile başla
 air-canvas --camera 1 --no-voice
+air-canvas --windowed          # tam ekran yerine pencerede başla
+air-canvas --design "dron"     # açılışta bir 3D tasarım hazırla
 air-canvas --help
 ```
 
@@ -60,7 +65,21 @@ air-canvas --help
 | `S` | Kaydet | `V` | Sesli komut / not |
 | `B` | Tahta modu | `A` | Şekil tanıma aç/kapat |
 | `+` / `-` | Fırça kalınlığı | `H` | Yardım panelini göster/gizle |
-| `Q` / `Esc` | Çıkış | | |
+| `Q` / `Esc` | Çıkış | `F` | Tam ekran / pencere |
+| `N` / `P` | Sonraki / önceki tasarım adımı | `R` | Adımı tekrarla |
+| `G` | 3D rehberi göster/gizle | `X` | Tasarımı STL olarak kaydet |
+| `K` | Yapay zekâ çizimini kontrol etsin | | |
+
+## 3D tasarım asistanı
+
+`V` tuşuna bas ve ne yapmak istediğini söyle. İçinde *tasarla*, *3D* ya da *vida*, *somun*, *dron*, *araba*, *tekerlek*, *fan*, *SSD* gibi bir nesne geçen her cümle bir tasarım başlatır.
+
+1. Yapay zekâ nesneyi basılabilir parçalara ayırır (delikler, standart ölçüler, en az 1,2 mm duvar, dik sarkma yok) ve her parçayı kutu, silindir/koni/altıgen ve kürelerle modeller.
+2. Model, çizdiğin çizgilerin altında yarı saydam bir 3D rehber olarak görünür. Sıradaki parça vurgulanır, sağdaki panelde talimatı ve milimetre cinsinden ölçüsü yazar.
+3. Parçalar arasında *"sonraki"* / *"önceki"* / *"tekrar"* diyerek gezin. *"Kontrol et"* deyince yapay zekâ çizimine bakar; istediğini de sorabilirsin (*"duvar kalınlığı kaç olmalı?"*).
+4. *"STL"* de (veya `X`'e bas). Her parça tablaya düz oturan ayrı bir STL olarak; montaj önizlemesi, `talimatlar.txt` ve `tasarim.json` ile birlikte `<kayıt klasörü>/3D/` altına yazılır.
+
+**Hangi yapay zekâ kullanılıyor?** `ai` eki kuruluysa ve bir Anthropic kimlik bilgisi (`ANTHROPIC_API_KEY` veya `ant auth login` profili) varsa, tarif edebildiğin her şeyi Claude (`claude-opus-5-5`, yapılandırılmış JSON çıktı) tasarlar. Claude yoksa yerel dil modeli (LM Studio / Ollama) denenir. Yerleşik şablonlar internet olmadan da çalışır: cıvata, somun, dron, dron kolu, araba, tekerlek, fan ızgarası, SSD braketi.
 
 ## Ayarlar
 
@@ -71,6 +90,8 @@ air-canvas --help
 | `AIR_CANVAS_VOICE` | `tr-TR-AhmetNeural` (veya `tr-TR-EmelNeural`) |
 | `AIR_CANVAS_LLM_URL` | sırasıyla LM Studio `:1234` ve Ollama `:11434` denenir |
 | `AIR_CANVAS_LLM_MODEL` | sunucunun bildirdiği ilk model |
+| `ANTHROPIC_API_KEY` | 3D tasarım asistanında Claude'u etkinleştirir |
+| `AIR_CANVAS_CLAUDE_MODEL` | `claude-opus-5-5` |
 
 ## Kütüphane olarak kullanım
 
@@ -103,6 +124,8 @@ air_canvas/
   canvas.py      Çizim motoru: el takibi, hareketler, çizgiler, şekiller, menü, kaydetme
   speech.py      Türkçe sesli geri bildirim (Edge TTS → gTTS → Türkçe Windows sesi)
   llm.py         Sesli not özetleri için isteğe bağlı yerel dil modeli istemcisi (LM Studio / Ollama)
+  design.py      3D tasarımlar: parçalar, katı modelleme (manifold3d), STL, 3D önizleme, şablonlar
+  ai.py          Tasarım asistanı: önce Claude, sonra yerel dil modeli, sonra yerleşik şablonlar
   config.py      Varsayılan yollar (ortam değişkenleriyle değiştirilebilir)
   __main__.py    Komut satırı uygulaması (air-canvas)
 tests/           pytest testleri, yalnızca sentetik veri

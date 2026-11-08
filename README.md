@@ -22,6 +22,8 @@
 - **Undo / redo** (bounded history), eraser, six colors, adjustable brush, whiteboard mode.
 - **Saves** a transparent PNG of the drawing, a screenshot of the full view and a text file with your voice notes.
 - **Mouse fallback**: draw with the mouse, change brush size with the wheel.
+- **AI 3D design assistant**: say *"dron tasarla"*, *"M3 vida çiz"* or *"model araba yap"* and get a printable design, from a screw to a full car model. It is split into parts, shown as a translucent 3D guide you can trace, explained step by step by voice, and exported as bed-ready STL files.
+- **Fullscreen by default** (`F` switches to a window).
 - Smoothed strokes and a short grace period, so lines do not break when tracking drops a frame.
 
 ## Install
@@ -32,6 +34,7 @@ Requires Python 3.9+ and a webcam.
 git clone https://github.com/GencayCeliker/air-canvas.git
 cd air-canvas
 pip install -e ".[voice]"      # or: pip install -e .   (no voice features)
+pip install -e ".[ai]"         # optional: Claude for the 3D design assistant
 ```
 
 The MediaPipe hand model (~7.5 MB) is downloaded automatically on first start.
@@ -42,6 +45,8 @@ The MediaPipe hand model (~7.5 MB) is downloaded automatically on first start.
 air-canvas                     # or: python -m air_canvas
 air-canvas --board             # start on a plain whiteboard
 air-canvas --camera 1 --no-voice
+air-canvas --windowed          # start in a window instead of fullscreen
+air-canvas --design "dron"     # open with a 3D design ready
 air-canvas --help
 ```
 
@@ -60,7 +65,21 @@ air-canvas --help
 | `S` | Save | `V` | Voice command / note |
 | `B` | Whiteboard mode | `A` | Shape recognition on/off |
 | `+` / `-` | Brush size | `H` | Show/hide help panel |
-| `Q` / `Esc` | Quit | | |
+| `Q` / `Esc` | Quit | `F` | Fullscreen / window |
+| `N` / `P` | Next / previous design step | `R` | Repeat step |
+| `G` | Show/hide 3D guide | `X` | Export design as STL |
+| `K` | AI checks your drawing | | |
+
+## 3D design assistant
+
+Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an object such as *vida*, *somun*, *dron*, *araba*, *tekerlek*, *fan* or *SSD* starts a design.
+
+1. The AI splits the object into printable parts (holes, standard sizes, 1.2 mm minimum walls, no steep overhangs) and models each part from boxes, cylinders/cones/hexagons and spheres.
+2. The model appears as a translucent 3D guide under your ink. The current part is highlighted, and the panel on the right shows its instructions and size in millimetres.
+3. Say *"sonraki"* / *"önceki"* / *"tekrar"* to move through the parts, *"kontrol et"* to have the AI look at your drawing, or ask a question (*"duvar kalınlığı kaç olmalı?"*).
+4. Say *"STL"* (or press `X`). Each part is written as its own STL, lying flat on the bed, together with an assembly preview, `talimatlar.txt` and `tasarim.json`, in `<save dir>/3D/`.
+
+**Which AI is used?** With the `ai` extra and an Anthropic credential (`ANTHROPIC_API_KEY` or an `ant auth login` profile), Claude (`claude-opus-5-5`, structured JSON output) designs anything you can describe. Without Claude, a local LLM (LM Studio / Ollama) is tried. The built-in templates work offline: bolt, nut, drone, drone arm, car, wheel, fan grill, SSD bracket.
 
 ## Configuration
 
@@ -71,6 +90,8 @@ air-canvas --help
 | `AIR_CANVAS_VOICE` | `tr-TR-AhmetNeural` (or `tr-TR-EmelNeural`) |
 | `AIR_CANVAS_LLM_URL` | tries LM Studio `:1234` and Ollama `:11434` |
 | `AIR_CANVAS_LLM_MODEL` | first model the server reports |
+| `ANTHROPIC_API_KEY` | enables Claude for the 3D design assistant |
+| `AIR_CANVAS_CLAUDE_MODEL` | `claude-opus-5-5` |
 
 ## Use as a library
 
@@ -103,6 +124,8 @@ air_canvas/
   canvas.py      Drawing engine: hand tracking, gestures, strokes, shapes, toolbar, saving
   speech.py      Turkish voice feedback (Edge TTS → gTTS → Turkish Windows voice)
   llm.py         Optional local LLM client for voice-note summaries (LM Studio / Ollama)
+  design.py      3D designs: parts, solid modelling (manifold3d), STL export, 3D preview, templates
+  ai.py          Design assistant: Claude, then a local LLM, then built-in templates
   config.py      Default paths, overridable with environment variables
   __main__.py    Command-line app (air-canvas)
 tests/           pytest suite, synthetic input only
