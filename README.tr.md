@@ -46,6 +46,7 @@ air-canvas                     # veya: python -m air_canvas
 air-canvas --board             # düz tahta ile başla
 air-canvas --camera 1 --no-voice
 air-canvas --windowed          # tam ekran yerine pencerede başla
+air-canvas --no-shape-assist   # şekil tanıma kapalı başla (aç/kapat: A)
 air-canvas --design "dron"     # açılışta bir 3D tasarım hazırla
 air-canvas --help
 ```
@@ -89,7 +90,9 @@ air-canvas --help
 | `AIR_CANVAS_MODEL` | kullanıcı önbellek klasörü (`%LOCALAPPDATA%\air_canvas` / `~/.cache/air_canvas`) |
 | `AIR_CANVAS_VOICE` | `tr-TR-AhmetNeural` (veya `tr-TR-EmelNeural`) |
 | `AIR_CANVAS_LLM_URL` | sırasıyla LM Studio `:1234` ve Ollama `:11434` denenir |
-| `AIR_CANVAS_LLM_MODEL` | sunucunun bildirdiği ilk model |
+| `AIR_CANVAS_LLM_MODEL` | her iş için tek model (boşsa işe göre otomatik seçilir) |
+| `AIR_CANVAS_LLM_DESIGN_MODEL` | 3D tasarım (JSON) modeli; varsayılan: adında "coder" geçen model |
+| `AIR_CANVAS_LLM_VISION_MODEL` | çizim kontrolü (görsel) modeli; varsayılan: adında "vl"/"vision" geçen model |
 | `ANTHROPIC_API_KEY` | 3D tasarım asistanında Claude'u etkinleştirir |
 | `AIR_CANVAS_CLAUDE_MODEL` | `claude-opus-5-5` |
 
