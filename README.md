@@ -46,6 +46,7 @@ air-canvas                     # or: python -m air_canvas
 air-canvas --board             # start on a plain whiteboard
 air-canvas --camera 1 --no-voice
 air-canvas --windowed          # start in a window instead of fullscreen
+air-canvas --no-shape-assist   # start with shape recognition off (toggle: A)
 air-canvas --design "dron"     # open with a 3D design ready
 air-canvas --help
 ```
@@ -89,7 +90,9 @@ Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an
 | `AIR_CANVAS_MODEL` | user cache folder (`%LOCALAPPDATA%\air_canvas` / `~/.cache/air_canvas`) |
 | `AIR_CANVAS_VOICE` | `tr-TR-AhmetNeural` (or `tr-TR-EmelNeural`) |
 | `AIR_CANVAS_LLM_URL` | tries LM Studio `:1234` and Ollama `:11434` |
-| `AIR_CANVAS_LLM_MODEL` | first model the server reports |
+| `AIR_CANVAS_LLM_MODEL` | one model for every task (empty: picked per task) |
+| `AIR_CANVAS_LLM_DESIGN_MODEL` | model for 3D designs (JSON); default: a model with "coder" in its name |
+| `AIR_CANVAS_LLM_VISION_MODEL` | model for drawing checks (images); default: a model with "vl"/"vision" in its name |
 | `ANTHROPIC_API_KEY` | enables Claude for the 3D design assistant |
 | `AIR_CANVAS_CLAUDE_MODEL` | `claude-opus-5-5` |
 
