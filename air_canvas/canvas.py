@@ -1417,6 +1417,8 @@ class AirCanvas:
     def _draw_design_panel(self, img: np.ndarray) -> None:
         """Sağ tarafta tasarım adı, parça listesi ve geçerli adımın talimatı."""
         design = self.design
+        if design is None:
+            return
         x1, y1, x2, y2 = PANEL_RECT
         roi = img[y1:y2, x1:x2]
         cv2.addWeighted(np.full_like(roi, (36, 26, 22)), 0.82, roi, 0.18, 0, dst=roi)
