@@ -246,3 +246,15 @@ def test_spoken_feedback_uses_turkish_spelling_and_shared_speaker():
     c2 = ac.AirCanvas(auto_init=False, speaker=busy)
     c2._say_async("Kare algılandı.")
     assert busy.said == []
+
+
+def test_mouse_wheel_changes_brush_without_getmousewheeldelta(canvas, monkeypatch):
+    # OpenCV 5'te cv2.getMouseWheelDelta yok; delta flags'in üst 16 bitinden okunur.
+    monkeypatch.delattr(cv2, "getMouseWheelDelta", raising=False)
+    assert ac.AirCanvas._wheel_delta(120 << 16) == 120
+    assert ac.AirCanvas._wheel_delta((-120 & 0xFFFF) << 16) == -120
+    start = canvas.brush_thickness
+    canvas._on_mouse(cv2.EVENT_MOUSEWHEEL, 100, 300, 120 << 16, None)
+    assert canvas.brush_thickness > start
+    canvas._on_mouse(cv2.EVENT_MOUSEWHEEL, 100, 300, (-120 & 0xFFFF) << 16, None)
+    assert canvas.brush_thickness == start

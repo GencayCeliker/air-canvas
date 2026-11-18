@@ -1435,6 +1435,16 @@ class AirCanvas:
                 break
             cv2.putText(img, line, (x1 + 10, y), font, 0.45, (235, 235, 235), 1)
 
+    @staticmethod
+    def _wheel_delta(flags: int) -> int:
+        """Fare tekerleği adımı (işaretli). OpenCV 5 `getMouseWheelDelta`'yı kaldırdı;
+        değer `flags`'in üst 16 bitinde işaretli tamsayı olarak gelir."""
+        getter = getattr(cv2, "getMouseWheelDelta", None)
+        if getter is not None:
+            return int(getter(flags))
+        delta = (int(flags) >> 16) & 0xFFFF
+        return delta - 0x10000 if delta >= 0x8000 else delta
+
     def _on_mouse(self, event, x, y, flags, param) -> None:
         if event == cv2.EVENT_LBUTTONDOWN:
             button_id = self._button_at(x, y)
@@ -1449,7 +1459,9 @@ class AirCanvas:
         elif event == cv2.EVENT_LBUTTONUP and self._stroke_owner == "mouse":
             self._end_stroke()
         elif event == cv2.EVENT_MOUSEWHEEL:
-            delta = cv2.getMouseWheelDelta(flags)
+            delta = self._wheel_delta(flags)
+            if delta == 0:
+                return
             self._perform("brush_up" if delta > 0 else "brush_down")
 
     # ─── Ana döngü ────────────────────────────────────────────────────────────
