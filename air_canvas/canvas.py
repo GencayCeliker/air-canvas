@@ -347,12 +347,12 @@ class AirCanvas:
         Türkçe ses yoksa susar; İngilizce sesle bozuk Türkçe okumaktan iyidir."""
         if not self._speech_lock.acquire(blocking=False):
             return
-        com_initialized = False
+        com = None   # CoInitialize başarılıysa comtypes modülü; finally'de CoUninitialize için
         try:
             import comtypes  # type: ignore
             import comtypes.client  # type: ignore
             comtypes.CoInitialize()
-            com_initialized = True
+            com = comtypes
             speaker = comtypes.client.CreateObject("SAPI.SpVoice")
             voices = speaker.GetVoices()
             for i in range(voices.Count):
@@ -366,9 +366,9 @@ class AirCanvas:
         except Exception:
             pass
         finally:
-            if com_initialized:
+            if com is not None:
                 try:
-                    comtypes.CoUninitialize()
+                    com.CoUninitialize()
                 except Exception:
                     pass
             self._speech_lock.release()
