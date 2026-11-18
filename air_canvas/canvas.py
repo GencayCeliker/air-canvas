@@ -731,7 +731,7 @@ class AirCanvas:
         x1, y1, x2, y2 = GUIDE_RECT
         highlight = self.design_step if self.design_step >= 0 else None
         img = render_preview(self.design, x2 - x1, y2 - y1, highlight=highlight)
-        self._guide = (img, img.any(axis=2))
+        self._guide = (img, np.any(img, axis=2))
 
     def _design_goto(self, step: int) -> None:
         if self.design is None:
