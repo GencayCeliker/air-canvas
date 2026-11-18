@@ -28,6 +28,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+if __package__ in (None, ""):
+    # Dosya doğrudan çalıştırıldı (IDE'de "Run Python File" veya ``python air_canvas/canvas.py``);
+    # göreli import'lar çalışmaz. Paket kökünü ekleyip normal giriş noktasına devret.
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from air_canvas.__main__ import main as _main
+    sys.exit(_main())
+
 from .config import default_model_path, default_save_dir
 
 try:
@@ -339,12 +347,12 @@ class AirCanvas:
         Türkçe ses yoksa susar; İngilizce sesle bozuk Türkçe okumaktan iyidir."""
         if not self._speech_lock.acquire(blocking=False):
             return
-        com_initialized = False
+        com = None   # CoInitialize başarılıysa comtypes modülü; finally'de CoUninitialize için
         try:
             import comtypes  # type: ignore
             import comtypes.client  # type: ignore
             comtypes.CoInitialize()
-            com_initialized = True
+            com = comtypes
             speaker = comtypes.client.CreateObject("SAPI.SpVoice")
             voices = speaker.GetVoices()
             for i in range(voices.Count):
@@ -358,9 +366,9 @@ class AirCanvas:
         except Exception:
             pass
         finally:
-            if com_initialized:
+            if com is not None:
                 try:
-                    comtypes.CoUninitialize()
+                    com.CoUninitialize()
                 except Exception:
                     pass
             self._speech_lock.release()
@@ -519,7 +527,11 @@ class AirCanvas:
                     with sr.Microphone() as source:
                         recognizer.adjust_for_ambient_noise(source, duration=0.3)
                         audio = recognizer.listen(source, timeout=5, phrase_time_limit=12)
-                    spoken_text = recognizer.recognize_google(audio, language="tr-TR")
+                    # recognize_google çalışma anında eklenir; statik analiz göremediği için getattr.
+                    recognize = getattr(recognizer, "recognize_google", None)
+                    if recognize is None:
+                        raise RuntimeError("SpeechRecognition sürümünde recognize_google yok")
+                    spoken_text = recognize(audio, language="tr-TR")
                 except Exception as exc:
                     log.debug("[AirCanvas] SpeechRecognition dinleme uyarısı: %s", exc)
 
@@ -719,7 +731,7 @@ class AirCanvas:
         x1, y1, x2, y2 = GUIDE_RECT
         highlight = self.design_step if self.design_step >= 0 else None
         img = render_preview(self.design, x2 - x1, y2 - y1, highlight=highlight)
-        self._guide = (img, img.any(axis=2))
+        self._guide = (img, np.any(img, axis=2))
 
     def _design_goto(self, step: int) -> None:
         if self.design is None:
@@ -1077,9 +1089,11 @@ class AirCanvas:
             except Exception:
                 MP_TASKS_OK = False
 
-        if MP_OK:
+        # Eski Solutions API'si mediapipe 0.10.x ile sınırlı; yeni sürümlerde yoktur.
+        solutions = getattr(mp, "solutions", None) if mp is not None else None
+        if MP_OK and solutions is not None:
             try:
-                self.mp_hands = mp.solutions.hands
+                self.mp_hands = solutions.hands
                 self.hands = self.mp_hands.Hands(
                     max_num_hands=1,
                     min_detection_confidence=0.75,
@@ -1114,6 +1128,10 @@ class AirCanvas:
     def _init_tasks_detector(self) -> bool:
         """mediapipe Tasks API ile el algılayıcıyı kurar .
         Mümkünse VIDEO modu kullanılır (kareler arası takip → daha akıcı ve hızlı)."""
+        tasks, vision = mp_python, mp_vision
+        if tasks is None or vision is None:
+            log.warning("[AirCanvas] mediapipe Tasks API yüklenemedi.")
+            return False
         model_path = self.model_path or default_model_path()
         if not self._ensure_model_exists(model_path):
             log.warning("[AirCanvas] El modeli bulunamadı: %s", model_path)
@@ -1123,9 +1141,9 @@ class AirCanvas:
             try:
                 with open(model_path, "rb") as fh:
                     model_bytes = fh.read()
-                base_options = mp_python.BaseOptions(model_asset_buffer=model_bytes)
+                base_options = tasks.BaseOptions(model_asset_buffer=model_bytes)
             except Exception:
-                base_options = mp_python.BaseOptions(model_asset_path=model_path)
+                base_options = tasks.BaseOptions(model_asset_path=model_path)
 
             common = dict(
                 base_options=base_options,
@@ -1135,13 +1153,13 @@ class AirCanvas:
                 min_tracking_confidence=0.7,
             )
             try:
-                options = mp_vision.HandLandmarkerOptions(running_mode=mp_vision.RunningMode.VIDEO, **common)
-                self.detector = mp_vision.HandLandmarker.create_from_options(options)
+                options = vision.HandLandmarkerOptions(running_mode=vision.RunningMode.VIDEO, **common)
+                self.detector = vision.HandLandmarker.create_from_options(options)
                 self._video_mode = True
             except Exception as exc:
                 log.debug("[AirCanvas] VIDEO modu kullanılamadı, IMAGE moduna geçiliyor: %s", exc)
-                options = mp_vision.HandLandmarkerOptions(**common)
-                self.detector = mp_vision.HandLandmarker.create_from_options(options)
+                options = vision.HandLandmarkerOptions(**common)
+                self.detector = vision.HandLandmarker.create_from_options(options)
                 self._video_mode = False
             return True
         except Exception as exc:
@@ -1154,7 +1172,7 @@ class AirCanvas:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         hands_lm: List[List[List[int]]] = []
 
-        if self.detector is not None:
+        if self.detector is not None and mp is not None:
             try:
                 mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb_frame))
                 if self._video_mode:
@@ -1399,6 +1417,8 @@ class AirCanvas:
     def _draw_design_panel(self, img: np.ndarray) -> None:
         """Sağ tarafta tasarım adı, parça listesi ve geçerli adımın talimatı."""
         design = self.design
+        if design is None:
+            return
         x1, y1, x2, y2 = PANEL_RECT
         roi = img[y1:y2, x1:x2]
         cv2.addWeighted(np.full_like(roi, (36, 26, 22)), 0.82, roi, 0.18, 0, dst=roi)
@@ -1427,6 +1447,16 @@ class AirCanvas:
                 break
             cv2.putText(img, line, (x1 + 10, y), font, 0.45, (235, 235, 235), 1)
 
+    @staticmethod
+    def _wheel_delta(flags: int) -> int:
+        """Fare tekerleği adımı (işaretli). OpenCV 5 `getMouseWheelDelta`'yı kaldırdı;
+        değer `flags`'in üst 16 bitinde işaretli tamsayı olarak gelir."""
+        getter = getattr(cv2, "getMouseWheelDelta", None)
+        if getter is not None:
+            return int(getter(flags))
+        delta = (int(flags) >> 16) & 0xFFFF
+        return delta - 0x10000 if delta >= 0x8000 else delta
+
     def _on_mouse(self, event, x, y, flags, param) -> None:
         if event == cv2.EVENT_LBUTTONDOWN:
             button_id = self._button_at(x, y)
@@ -1441,7 +1471,9 @@ class AirCanvas:
         elif event == cv2.EVENT_LBUTTONUP and self._stroke_owner == "mouse":
             self._end_stroke()
         elif event == cv2.EVENT_MOUSEWHEEL:
-            delta = cv2.getMouseWheelDelta(flags)
+            delta = self._wheel_delta(flags)
+            if delta == 0:
+                return
             self._perform("brush_up" if delta > 0 else "brush_down")
 
     # ─── Ana döngü ────────────────────────────────────────────────────────────
