@@ -527,7 +527,11 @@ class AirCanvas:
                     with sr.Microphone() as source:
                         recognizer.adjust_for_ambient_noise(source, duration=0.3)
                         audio = recognizer.listen(source, timeout=5, phrase_time_limit=12)
-                    spoken_text = recognizer.recognize_google(audio, language="tr-TR")
+                    # recognize_google çalışma anında eklenir; statik analiz göremediği için getattr.
+                    recognize = getattr(recognizer, "recognize_google", None)
+                    if recognize is None:
+                        raise RuntimeError("SpeechRecognition sürümünde recognize_google yok")
+                    spoken_text = recognize(audio, language="tr-TR")
                 except Exception as exc:
                     log.debug("[AirCanvas] SpeechRecognition dinleme uyarısı: %s", exc)
 
