@@ -1085,9 +1085,11 @@ class AirCanvas:
             except Exception:
                 MP_TASKS_OK = False
 
-        if MP_OK:
+        # Eski Solutions API'si mediapipe 0.10.x ile sınırlı; yeni sürümlerde yoktur.
+        solutions = getattr(mp, "solutions", None) if mp is not None else None
+        if MP_OK and solutions is not None:
             try:
-                self.mp_hands = mp.solutions.hands
+                self.mp_hands = solutions.hands
                 self.hands = self.mp_hands.Hands(
                     max_num_hands=1,
                     min_detection_confidence=0.75,
