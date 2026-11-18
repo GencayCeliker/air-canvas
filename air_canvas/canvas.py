@@ -28,6 +28,14 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+if __package__ in (None, ""):
+    # Dosya doğrudan çalıştırıldı (IDE'de "Run Python File" veya ``python air_canvas/canvas.py``);
+    # göreli import'lar çalışmaz. Paket kökünü ekleyip normal giriş noktasına devret.
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from air_canvas.__main__ import main as _main
+    sys.exit(_main())
+
 from .config import default_model_path, default_save_dir
 
 try:
