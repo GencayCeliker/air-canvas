@@ -1124,6 +1124,10 @@ class AirCanvas:
     def _init_tasks_detector(self) -> bool:
         """mediapipe Tasks API ile el algılayıcıyı kurar .
         Mümkünse VIDEO modu kullanılır (kareler arası takip → daha akıcı ve hızlı)."""
+        tasks, vision = mp_python, mp_vision
+        if tasks is None or vision is None:
+            log.warning("[AirCanvas] mediapipe Tasks API yüklenemedi.")
+            return False
         model_path = self.model_path or default_model_path()
         if not self._ensure_model_exists(model_path):
             log.warning("[AirCanvas] El modeli bulunamadı: %s", model_path)
@@ -1133,9 +1137,9 @@ class AirCanvas:
             try:
                 with open(model_path, "rb") as fh:
                     model_bytes = fh.read()
-                base_options = mp_python.BaseOptions(model_asset_buffer=model_bytes)
+                base_options = tasks.BaseOptions(model_asset_buffer=model_bytes)
             except Exception:
-                base_options = mp_python.BaseOptions(model_asset_path=model_path)
+                base_options = tasks.BaseOptions(model_asset_path=model_path)
 
             common = dict(
                 base_options=base_options,
@@ -1145,13 +1149,13 @@ class AirCanvas:
                 min_tracking_confidence=0.7,
             )
             try:
-                options = mp_vision.HandLandmarkerOptions(running_mode=mp_vision.RunningMode.VIDEO, **common)
-                self.detector = mp_vision.HandLandmarker.create_from_options(options)
+                options = vision.HandLandmarkerOptions(running_mode=vision.RunningMode.VIDEO, **common)
+                self.detector = vision.HandLandmarker.create_from_options(options)
                 self._video_mode = True
             except Exception as exc:
                 log.debug("[AirCanvas] VIDEO modu kullanılamadı, IMAGE moduna geçiliyor: %s", exc)
-                options = mp_vision.HandLandmarkerOptions(**common)
-                self.detector = mp_vision.HandLandmarker.create_from_options(options)
+                options = vision.HandLandmarkerOptions(**common)
+                self.detector = vision.HandLandmarker.create_from_options(options)
                 self._video_mode = False
             return True
         except Exception as exc:
@@ -1164,7 +1168,7 @@ class AirCanvas:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         hands_lm: List[List[List[int]]] = []
 
-        if self.detector is not None:
+        if self.detector is not None and mp is not None:
             try:
                 mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(rgb_frame))
                 if self._video_mode:
