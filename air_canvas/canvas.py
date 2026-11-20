@@ -200,6 +200,10 @@ class AirCanvas:
         self._speech_lock = threading.Lock()
         self._speaker = speaker          # Dışarıdan verilen ses motoru (isteğe bağlı)
         self._speaker_failed = False
+        # Sırayla okunması gereken mesajlar (tasarım adımları, AI cevapları): (nesil, metin)
+        self._speech_queue: "queue.Queue[Tuple[int, str]]" = queue.Queue()
+        self._speech_gen = 0             # stop_speech() bu sayacı artırır; eski mesajlar atlanır
+        self._speech_worker: Optional[threading.Thread] = None
         self._run_lock = threading.Lock()
         self._running = False
         self._stop_event = threading.Event()
@@ -320,27 +324,75 @@ class AirCanvas:
     def _say_async(self, text: str, wait: bool = False) -> None:
         """Kamera FPS'ini düşürmeden arka planda Türkçe sesli geri bildirim verir.
         Zaten konuşuluyorsa yeni mesaj atlanır (sesler üst üste binmez). ``wait=True`` ise
-        atlanmaz; önceki konuşmanın bitmesi (en fazla 30 sn) beklenir — tasarım adımları için."""
+        atlanmaz; tek bir kuyruk thread'i mesajları sırayla okur — tasarım adımları ve AI cevapları için."""
         if not self.voice_feedback or not text:
+            return
+
+        if wait:
+            self._speech_queue.put((self._speech_gen, text))
+            self._ensure_speech_worker()
             return
 
         speaker = self._get_speaker()
         if speaker is not None:
             try:
-                if not speaker.is_busy():
+                if not speaker.is_busy() and self._speech_queue.empty():
                     speaker.say(text)
-                elif wait:
-                    def _later():
-                        deadline = time.time() + 30
-                        while speaker.is_busy() and time.time() < deadline:
-                            time.sleep(0.2)
-                        speaker.say(text)
-                    threading.Thread(target=_later, daemon=True).start()
                 return
             except Exception as exc:
                 log.warning("[AirCanvas] Ses motoru hatası: %s", exc)
 
         threading.Thread(target=self._say_sapi_turkish, args=(text,), daemon=True).start()
+
+    def _ensure_speech_worker(self) -> None:
+        if self._speech_worker is None or not self._speech_worker.is_alive():
+            self._speech_worker = threading.Thread(target=self._speech_loop, daemon=True,
+                                                   name="AirCanvasSpeechQueue")
+            self._speech_worker.start()
+
+    def _speech_loop(self) -> None:
+        """Kuyruktaki mesajları sırayla okur: her mesaj için önceki konuşmanın bitmesini bekler."""
+        while True:
+            gen, text = self._speech_queue.get()
+            if gen != self._speech_gen:
+                continue   # stop_speech() sonrası eskimiş mesaj
+            speaker = self._get_speaker()
+            if speaker is None:
+                self._say_sapi_turkish(text)
+                continue
+            try:
+                deadline = time.time() + 60
+                while speaker.is_busy() and time.time() < deadline and gen == self._speech_gen:
+                    time.sleep(0.1)
+                if gen == self._speech_gen:
+                    speaker.say(text)
+            except Exception as exc:
+                log.warning("[AirCanvas] Ses motoru hatası: %s", exc)
+
+    def _speech_idle(self) -> bool:
+        speaker = self._speaker
+        busy = False
+        if speaker is not None:
+            try:
+                busy = bool(speaker.is_busy())
+            except Exception:
+                busy = False
+        return self._speech_queue.empty() and not busy
+
+    def stop_speech(self) -> None:
+        """Süren konuşmayı keser ve bekleyen mesajları atar (mikrofon asistanın sesini duymasın)."""
+        self._speech_gen += 1
+        while True:
+            try:
+                self._speech_queue.get_nowait()
+            except queue.Empty:
+                break
+        stop = getattr(self._speaker, "stop", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception as exc:
+                log.debug("[AirCanvas] Konuşma durdurulamadı: %s", exc)
 
     def _say_sapi_turkish(self, text: str) -> None:
         """Son çare: yalnızca Türkçe bir Windows sesi kuruluysa SAPI ile konuşur.
@@ -518,8 +570,12 @@ class AirCanvas:
         self.voice_listening = True
         self.assistant_tip = "Asistan dinliyor... Konusun (orn. 'dron tasarla', 'sonraki', 'kontrol et')"
 
+        # Asistan konuşuyorsa sustur: mikrofon kendi sesini komut sanmasın.
+        self.stop_speech()
+
         def _worker():
             try:
+                time.sleep(0.15)   # Hoparlördeki son sesin sönmesi için kısa bekleme
                 spoken_text = ""
                 try:
                     import speech_recognition as sr  # type: ignore
