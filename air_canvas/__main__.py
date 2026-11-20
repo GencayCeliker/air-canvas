@@ -27,6 +27,12 @@ def main(argv=None) -> int:
     parser.add_argument("--windowed", action="store_true", help="start in a window instead of fullscreen (toggle: F)")
     parser.add_argument("--design", metavar="TEXT",
                         help="start with a 3D design request, e.g. --design \"dron kolu\"")
+    parser.add_argument("--ai", choices=["auto", "claude", "local", "template"],
+                        help="which AI designs: auto (Claude -> local LLM -> templates), claude, local "
+                             "(LM Studio / Ollama, nothing leaves the computer) or template")
+    parser.add_argument("--offline", action="store_true",
+                        help="work without internet: local LLM, offline speech recognition (faster-whisper) "
+                             "and the local Windows voice; no data is sent anywhere")
     parser.add_argument("-v", "--verbose", action="store_true", help="show debug logs")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
@@ -34,7 +40,8 @@ def main(argv=None) -> int:
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(levelname)s %(message)s")
 
-    canvas = AirCanvas(save_dir=args.save_dir, camera_index=args.camera)
+    canvas = AirCanvas(save_dir=args.save_dir, camera_index=args.camera, ai_mode=args.ai,
+                       offline=True if args.offline else None)
     canvas.board_mode = args.board
     canvas.voice_feedback = not args.no_voice
     canvas.shape_assist = not args.no_shape_assist
