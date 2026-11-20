@@ -197,8 +197,7 @@ def test_voice_shape_size_and_position():
 
 
 def test_multiple_voice_shapes_get_own_colors_and_side_by_side_layout():
-    import numpy as np
-    c = ac.AirCanvas(auto_init=False)
+    c =ac.AirCanvas(auto_init=False)
     c.voice_feedback = False
     actions, _ = c._parse_voice_command("kırmızı daire ve mavi üçgen çiz")
     assert [a[0] for a in actions] == ["color", "stamp", "color", "stamp"]

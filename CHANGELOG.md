@@ -10,8 +10,23 @@ All notable changes to this project are documented here. The format follows [Kee
 - Watertight solid modelling with manifold3d and STL export: one bed-ready file per part, an assembly preview, instructions and the design as JSON.
 - The AI answers spoken questions and reviews the current drawing (`kontrol et`).
 - Fullscreen window by default. `F` toggles it, `--windowed` starts in a window, `--design` opens with a design.
+- Offline mode (`--offline`, `AIR_CANVAS_OFFLINE`): local LLM designs, offline speech recognition with faster-whisper (`offline` extra) and the local Windows voice; no data leaves the computer (#13).
+- `--ai auto|claude|local|template` (`AIR_CANVAS_AI`) chooses which AI designs.
+- Before designing, the AI can ask one question about a missing key dimension and listens for the answer; *"sen karar ver"* uses standard sizes, *"vazgeç"* cancels (#13).
+- *"Taslağı çiz"* / `T` inks the design outline onto the canvas as an undoable line sketch (#13).
+- Local-model designs use the per-task model, a JSON schema, an example and a retry with the error message; drawing checks fall back to a local vision model (#18).
+- Voice shapes: rectangle, ellipse, hexagon, star and line; size (*büyük*, *küçük*) and position (*sola*, *sağ üste* …); several shapes in one sentence, each in its own color (#17).
+- Long AI answers are shown in a wrapped box above the help panel.
 
 ### Fixed
+- Queued spoken replies (design summary, steps, AI answers) were dropped when they arrived while the assistant was speaking (#14).
+- The microphone picked up the assistant's own voice; speech is now interrupted when listening starts (#14).
+- Reasoning blocks (`<think>`), markdown and emoji from model answers were read aloud (#15).
+- Every listening failure said "Sesinizi duyamadım"; missing packages, no microphone, no internet and unclear speech now get their own message (#16).
+- Questions and drawing checks sent while the AI was busy were silently dropped (#16).
+- *"Dikdörtgen"* drew a square (#17).
+- The design order did not match the docs (templates came before the local LLM) and local designs timed out after 20 s (#18).
+- OpenCV 5 compatibility (mouse wheel), mediapipe API access and type-narrowing fixes (#3–#10).
 - Running `air_canvas/__main__.py` directly no longer fails with a relative-import error.
 - Questions such as *"duvar kalınlığı kaç olmalı?"* are no longer mistaken for the *kalın* brush command.
 
