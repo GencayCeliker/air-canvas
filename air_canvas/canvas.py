@@ -149,6 +149,7 @@ class AirCanvas:
         camera_index: int = 0,
         model_path: Optional[str] = None,
         assistant=None,
+        listener=None,
     ):
         """
         speaker: ``say(text)`` ve ``is_busy()`` metotları olan bir ses motoru.
@@ -157,6 +158,8 @@ class AirCanvas:
                  ``available`` özelliği olan bir istemci. Verilmezse LM Studio / Ollama denenir.
         assistant: ``design(text)``, ``ask(...)``, ``review(...)`` metotları olan tasarım asistanı.
                  Verilmezse ilk ihtiyaçta ``ai.DesignAssistant`` kurulur (Claude → yerel LLM → şablon).
+        listener: metni döndüren (olmazsa ``listen.ListenError`` fırlatan) ``listen()`` metodu olan
+                 konuşma tanıyıcı. Verilmezse ``listen.SpeechListener`` (Google → Whisper) kurulur.
         """
         self.available = False
         self.detector = None
@@ -210,6 +213,7 @@ class AirCanvas:
         self._stop_event = threading.Event()
         self._llm = llm
         self._llm_checked_at = 0.0
+        self._listener = listener        # listen() metodu olan konuşma tanıyıcı (isteğe bağlı)
         self._last_view: Optional[np.ndarray] = None
         self._last_shape_label = ""
         self._last_shape_time = 0.0
@@ -449,6 +453,13 @@ class AirCanvas:
             return None
         return self._llm if getattr(self._llm, "available", False) else None
 
+    def _get_listener(self):
+        """Konuşma tanıyıcıyı (Google / çevrimdışı Whisper) ilk ihtiyaçta kurar."""
+        if self._listener is None:
+            from .listen import SpeechListener
+            self._listener = SpeechListener()
+        return self._listener
+
     def _summarize_speech(self, text: str) -> str:
         """Kullanıcının sesli söylediklerini kısa, net bir özete dönüştürür."""
         cleaned = (text or "").strip()
@@ -505,8 +516,8 @@ class AirCanvas:
                 return [("design_overview", None)], ""
             if has("rehber", "kılavuz", "kilavuz"):
                 return [("guide_toggle", None)], ""
-            if has("kontrol", "değerlendir", "degerlendir") or "nasıl olmuş" in low or "nasil olmus" in low:
-                return [("design_review", None)], "Çizimine bakıyorum."
+        if has("kontrol", "değerlendir", "degerlendir") or "nasıl olmuş" in low or "nasil olmus" in low:
+            return [("design_review", None)], "Çizimine bakıyorum."
         if has("stl", "yazdır", "yazdir") or "dışa aktar" in low or "disa aktar" in low or "baskıya" in low:
             return [("design_export", None)], ""
         from .design import TEMPLATE_KEYWORDS
@@ -582,24 +593,20 @@ class AirCanvas:
         def _worker():
             try:
                 time.sleep(0.15)   # Hoparlördeki son sesin sönmesi için kısa bekleme
-                spoken_text = ""
+                from .listen import ListenError
                 try:
-                    import speech_recognition as sr  # type: ignore
-                    recognizer = sr.Recognizer()
-                    with sr.Microphone() as source:
-                        recognizer.adjust_for_ambient_noise(source, duration=0.3)
-                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=12)
-                    # recognize_google çalışma anında eklenir; statik analiz göremediği için getattr.
-                    recognize = getattr(recognizer, "recognize_google", None)
-                    if recognize is None:
-                        raise RuntimeError("SpeechRecognition sürümünde recognize_google yok")
-                    spoken_text = recognize(audio, language="tr-TR")
+                    spoken_text = (self._get_listener().listen() or "").strip()
+                    if not spoken_text:
+                        raise ListenError("Söylediğinizi anlayamadım, lütfen tekrar söyleyin.", "unclear")
+                except ListenError as exc:
+                    log.info("[AirCanvas] Dinleme: %s", exc.message)
+                    self.assistant_tip = exc.message + " (Tekrar: V)"
+                    self._say_async(exc.message)
+                    return
                 except Exception as exc:
-                    log.debug("[AirCanvas] SpeechRecognition dinleme uyarısı: %s", exc)
-
-                if not spoken_text:
-                    self.assistant_tip = "Ses algilanamadi. Tekrar denemek icin 'V' tusuna basin."
-                    self._say_async("Sesinizi duyamadım, lütfen tekrar söyleyin.")
+                    log.warning("[AirCanvas] Dinleme hatası: %s", exc)
+                    self.assistant_tip = "Dinleme sirasinda hata oldu. Tekrar denemek icin 'V' tusuna basin."
+                    self._say_async("Dinlerken bir hata oldu, lütfen tekrar deneyin.")
                     return
 
                 self.voice_raw = spoken_text
@@ -836,8 +843,13 @@ class AirCanvas:
         self._say_async(f"{count} parça STL olarak kaydedildi. Talimatlar da klasörde.", wait=True)
         return folder
 
+    def _ai_busy_notice(self) -> None:
+        self.assistant_tip = "Hala onceki istegi dusunuyorum, biraz bekleyin."
+        self._say_async("Hâlâ önceki isteğin üzerinde düşünüyorum, biraz bekle.")
+
     def _ask_async(self, question: str) -> None:
         if self.ai_busy:
+            self._ai_busy_notice()
             return
         self.ai_busy = True
         design, step = self.design, self.design_step
@@ -867,7 +879,11 @@ class AirCanvas:
 
     def _review_drawing(self) -> None:
         """Ekran görüntüsünü (çizim + rehber) AI'a gösterip geri bildirim ister."""
-        if self._last_view is None or self.ai_busy:
+        if self.ai_busy:
+            self._ai_busy_notice()
+            return
+        if self._last_view is None:
+            self.assistant_tip = "Henuz degerlendirilecek bir goruntu yok."
             return
         view = self._last_view
         scale = 1024 / view.shape[1]
