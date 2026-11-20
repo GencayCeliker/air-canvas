@@ -166,3 +166,59 @@ def test_whisper_only_engine_never_calls_google(monkeypatch):
 def test_whisper_hallucinations_are_dropped():
     assert filter_hallucination("Altyazı M.K.") == ""
     assert filter_hallucination(" sonraki adım ") == "sonraki adım"
+
+
+# ─── Sesli şekiller ──────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("text, expected", [
+    ("dikdörtgen çiz", [("stamp", "DIKDORTGEN")]),
+    ("kare çiz", [("stamp", "KARE")]),
+    ("bir elips çiz", [("stamp", "ELIPS")]),
+    ("oval çiz", [("stamp", "ELIPS")]),
+    ("altıgen çiz", [("stamp", "ALTIGEN")]),          # "alt" konum kelimesiyle karışmaz
+    ("yıldız çiz", [("stamp", "YILDIZ")]),
+    ("düz bir çizgi çiz", [("stamp", "DUZ CIZGI")]),
+    ("çizgiyi kalınlaştır", [("brush_up", None)]),    # fırça komutu, çizgi damgası değil
+])
+def test_voice_shape_names(text, expected):
+    c = ac.AirCanvas(auto_init=False)
+    assert c._parse_voice_command(text)[0] == expected
+
+
+def test_voice_shape_size_and_position():
+    c = ac.AirCanvas(auto_init=False)
+    actions, message = c._parse_voice_command("sol üste büyük mavi daire çiz")
+    assert actions == [("color", 0), ("stamp", {"shape": "DAIRE", "scale": 1.6, "anchor": (-1.0, -1.0)})]
+    assert "Sol üste büyük mavi daire çizildi" in message
+
+    actions, message = c._parse_voice_command("sağa küçük kare koy")
+    assert actions == [("stamp", {"shape": "KARE", "scale": 0.55, "anchor": (1.0, 0.0)})]
+    assert message.startswith("Sağa küçük kare")
+
+
+def test_multiple_voice_shapes_get_own_colors_and_side_by_side_layout():
+    import numpy as np
+    c = ac.AirCanvas(auto_init=False)
+    c.voice_feedback = False
+    actions, _ = c._parse_voice_command("kırmızı daire ve mavi üçgen çiz")
+    assert [a[0] for a in actions] == ["color", "stamp", "color", "stamp"]
+    assert actions[1][1]["anchor"][0] < 0 < actions[3][1]["anchor"][0]
+    for action in actions:
+        c._perform(*action)
+    left, right = c.canvas[:, : ac.FRAME_W // 2], c.canvas[:, ac.FRAME_W // 2:]
+    assert (left == (0, 0, 255)).all(axis=2).any()        # kırmızı daire solda
+    assert (right == (255, 0, 0)).all(axis=2).any()       # mavi üçgen sağda
+    assert not (left == (255, 0, 0)).all(axis=2).any()
+    assert len(c.undo_stack) == 2                          # her şekil ayrı geri alma adımı
+    expected = "Kırmızı daire ve mavi üçgen yan yana çizildi."
+    assert c._parse_voice_command("kırmızı daire ve mavi üçgen çiz")[1] == expected
+
+
+@pytest.mark.parametrize("shape", ["DAIRE", "KARE", "DIKDORTGEN", "UCGEN", "ELIPS", "ALTIGEN", "YILDIZ", "DUZ CIZGI"])
+@pytest.mark.parametrize("anchor", [(-1.0, -1.0), (1.0, 1.0), (0.0, 0.0)])
+def test_stamped_shapes_stay_inside_drawing_area(shape, anchor):
+    c = ac.AirCanvas(auto_init=False)
+    c._stamp_shape({"shape": shape, "scale": 1.6, "anchor": anchor})
+    ys, xs = c.canvas.any(axis=2).nonzero()
+    assert len(ys) and ys.min() >= ac.DRAW_MIN_Y and ys.max() < ac.HUD_TOP
+    assert xs.min() > 0 and xs.max() < ac.FRAME_W - 1

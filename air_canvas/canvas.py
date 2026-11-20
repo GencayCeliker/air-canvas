@@ -125,6 +125,7 @@ SPOKEN_NAMES = {
     "MOR": "mor", "BEYAZ": "beyaz",
     "DUZ CIZGI": "düz çizgi", "UCGEN": "üçgen", "KARE": "kare",
     "DIKDORTGEN": "dikdörtgen", "DAIRE": "daire", "ELIPS": "elips",
+    "ALTIGEN": "altıgen", "YILDIZ": "yıldız",
 }
 
 
@@ -132,11 +133,37 @@ def _spoken(label: str) -> str:
     return SPOKEN_NAMES.get(label, label.lower())
 
 
+# Sıra önemlidir: önce daha özel kelimeler ("dikdörtgen" → "kare"den önce).
 VOICE_SHAPES = [
+    (("dikdörtgen", "dikdortgen"), "DIKDORTGEN"),
     (("daire", "çember", "cember", "yuvarlak"), "DAIRE"),
-    (("kare", "dikdörtgen", "dikdortgen", "kutu"), "KARE"),
+    (("elips", "oval"), "ELIPS"),
+    (("kare", "kutu"), "KARE"),
     (("üçgen", "ucgen"), "UCGEN"),
+    (("altıgen", "altigen"), "ALTIGEN"),
+    (("yıldız", "yildiz"), "YILDIZ"),
+    (("çizgi", "cizgi"), "DUZ CIZGI"),
 ]
+
+# Sesli şekil boyutu ve konumu (kelime kökleri; "alt" ile "altıgen" karışmasın diye tam ekler)
+VOICE_SIZES = [(("büyük", "buyuk", "kocaman", "dev"), 1.6, "büyük"),
+               (("küçük", "kucuk", "minik", "ufak"), 0.55, "küçük")]
+
+
+def _forms(*stems: str) -> set:
+    suffixes = ("", "a", "e", "da", "de", "ta", "te", "daki", "deki", "taki", "teki", "ya", "ye",
+                "ında", "inde", "unda", "ünde", "ına", "ine", "una", "üne")
+    return {stem + suf for stem in stems for suf in suffixes}
+
+
+VOICE_PLACES = {
+    "left": _forms("sol"),
+    "right": _forms("sağ", "sag"),
+    "up": _forms("üst", "ust", "yukarı", "yukari"),
+    "down": _forms("alt", "aşağı", "asagi"),
+    "center": _forms("orta", "merkez"),
+}
+STAMP_RADIUS = 130
 
 
 class AirCanvas:
@@ -561,17 +588,32 @@ class AirCanvas:
             actions.append(("board_set", False))
             messages.append("Kamera moduna geçildi")
 
-        for keywords, index in VOICE_COLORS:
-            if has(*keywords):
-                actions.append(("color", index))
-                messages.append(f"Kalem rengi {_spoken(PALETTE[index][0])} yapıldı")
-                break
-
-        for keywords, shape in VOICE_SHAPES:
-            if has(*keywords):
-                actions.append(("stamp", shape))
-                messages.append(f"Merkeze {_spoken(shape)} çizildi")
-                break
+        # "kırmızı daire ve mavi kare çiz": her parça kendi rengi, şekli, boyutu ve konumuyla.
+        stamps: List[Tuple[int, Dict[str, Any]]] = []
+        stamp_colors: List[str] = []
+        for segment in re.split(r"\s*(?:[,;]|\bve\b|\bile\b|\bsonra\b|\bardından\b|\bardindan\b)\s*", low):
+            seg_tokens = re.findall(r"\w+", segment)
+            if not seg_tokens:
+                continue
+            color, shape = self._voice_color(seg_tokens), self._voice_shape(seg_tokens)
+            color_word = _spoken(PALETTE[color][0]) if color is not None else ""
+            if color is not None:
+                actions.append(("color", color))
+                if not shape:
+                    messages.append(f"Kalem rengi {color_word} yapıldı")
+            if shape:
+                spec = self._voice_shape_spec(seg_tokens, shape)
+                actions.append(("stamp", spec))
+                stamps.append((len(actions) - 1, spec))
+                stamp_colors.append(color_word)
+        self._layout_stamps(actions, stamps)
+        if stamps and all(spec.get("auto") for _, spec in stamps):
+            names = [self._stamp_name(spec, color) for (_, spec), color in zip(stamps, stamp_colors)]
+            together = " ve ".join(names)
+            messages.append(f"{together[:1].upper()}{together[1:]} yan yana çizildi")
+        else:
+            for (_, spec), color in zip(stamps, stamp_colors):
+                messages.append(self._stamp_message(spec, color))
 
         if not actions:
             # Tasarım açıkken veya soru sorulduğunda konuşma AI'a soru olarak gider.
@@ -579,6 +621,72 @@ class AirCanvas:
                 return [("ask", text)], "Düşünüyorum..."
             return [], "Sesli notunuz kaydedildi."
         return actions, ". ".join(messages) + "."
+
+    @staticmethod
+    def _voice_color(tokens: List[str]) -> Optional[int]:
+        for keywords, index in VOICE_COLORS:
+            if any(t.startswith(k) for t in tokens for k in keywords):
+                return index
+        return None
+
+    @staticmethod
+    def _voice_shape(tokens: List[str]) -> str:
+        for keywords, shape in VOICE_SHAPES:
+            if any(t.startswith(k) for t in tokens for k in keywords):
+                if shape == "DUZ CIZGI":
+                    # "çizgiyi kalınlaştır" bir fırça komutudur; çizgi için açık bir çizme fiili gerekir.
+                    verb = any((t.startswith(("çiz", "ciz")) and not t.startswith(("çizgi", "cizgi")))
+                               or t.startswith(("ekle", "koy")) for t in tokens)
+                    if not verb:
+                        continue
+                return shape
+        return ""
+
+    @staticmethod
+    def _voice_shape_spec(tokens: List[str], shape: str) -> Dict[str, Any]:
+        spec: Dict[str, Any] = {"shape": shape}
+        for keywords, scale, _ in VOICE_SIZES:
+            if any(t.startswith(k) for t in tokens for k in keywords):
+                spec["scale"] = scale
+                break
+        ax = -1.0 if VOICE_PLACES["left"] & set(tokens) else 1.0 if VOICE_PLACES["right"] & set(tokens) else 0.0
+        ay = -1.0 if VOICE_PLACES["up"] & set(tokens) else 1.0 if VOICE_PLACES["down"] & set(tokens) else 0.0
+        if ax or ay or VOICE_PLACES["center"] & set(tokens):
+            spec["anchor"] = (ax, ay)
+        return spec
+
+    @staticmethod
+    def _layout_stamps(actions: List[Tuple[str, Any]], stamps: List[Tuple[int, Dict[str, Any]]]) -> None:
+        """Konumu söylenmemiş birden çok şekli yan yana dizer; tek ve sade şekil adıyla kalır."""
+        if len(stamps) > 1:
+            free = [spec for _, spec in stamps if "anchor" not in spec]
+            for i, spec in enumerate(free):
+                spec["anchor"] = (-1.0 + 2.0 * (i + 0.5) / len(free), 0.0) if len(free) > 1 else (0.0, 0.0)
+                spec.setdefault("scale", 0.75 if len(stamps) == 2 else 0.6)
+                spec["auto"] = True
+        for index, spec in stamps:
+            if set(spec) == {"shape"}:
+                actions[index] = ("stamp", spec["shape"])   # Geriye uyumlu: ("stamp", "DAIRE")
+
+    @staticmethod
+    def _stamp_name(spec: Dict[str, Any], color_word: str = "") -> str:
+        size = next((word for _, scale, word in VOICE_SIZES if spec.get("scale") == scale), "")
+        return " ".join(w for w in (size, color_word, _spoken(spec["shape"])) if w)
+
+    @classmethod
+    def _stamp_message(cls, spec: Dict[str, Any], color_word: str = "") -> str:
+        ax, ay = spec.get("anchor", (0.0, 0.0))
+        horiz = {-1.0: "Sol", 1.0: "Sağ"}.get(ax, "")
+        vert = {-1.0: "üst", 1.0: "alt"}.get(ay, "")
+        if horiz and vert:
+            place = f"{horiz} {vert}{'e' if vert == 'üst' else 'a'}"
+        elif horiz:
+            place = horiz + "a"
+        elif vert:
+            place = {"üst": "Üste", "alt": "Alta"}[vert]
+        else:
+            place = "Merkeze"
+        return f"{place} {cls._stamp_name(spec, color_word)} çizildi"
 
     def _listen_and_summarize_async(self) -> None:
         """Mikrofonu dinler; komutsa eylem kuyruğuna ekler, değilse not olarak özetler."""
@@ -676,7 +784,7 @@ class AirCanvas:
         elif action == "redo":
             self._redo()
         elif action == "stamp":
-            self._stamp_shape(str(value))
+            self._stamp_shape(value)
         elif action == "save":
             self._save()
         elif action == "voice":
@@ -1084,22 +1192,48 @@ class AirCanvas:
         elif kind == "ellipse":
             cv2.ellipse(canvas, shape["box"], color, thickness)
 
-    def _stamp_shape(self, name: str) -> None:
-        """Sesli komutla tuvalin ortasına hazır şekil çizer."""
-        cx, cy = FRAME_W // 2, (DRAW_MIN_Y + HUD_TOP) // 2
-        color = self.colors[self.color_index]
+    @staticmethod
+    def _stamp_geometry(name: str, cx: float, cy: float, r: float) -> Optional[Dict[str, Any]]:
+        """Sesli komut şekli: merkez (cx, cy) ve temel yarıçap r ile çizim tanımı."""
+        def poly(points):
+            return {"name": name, "kind": "poly", "points": np.round(np.array(points)).astype(np.int32)}
+
         if name == "DAIRE":
-            shape = {"name": name, "kind": "circle", "center": (cx, cy), "radius": 130}
-        elif name == "KARE":
-            shape = {"name": name, "kind": "poly", "points": np.array(
-                [[cx - 130, cy - 130], [cx + 130, cy - 130], [cx + 130, cy + 130], [cx - 130, cy + 130]], np.int32)}
-        elif name == "UCGEN":
-            shape = {"name": name, "kind": "poly", "points": np.array(
-                [[cx, cy - 130], [cx - 150, cy + 120], [cx + 150, cy + 120]], np.int32)}
-        else:
+            return {"name": name, "kind": "circle", "center": (int(cx), int(cy)), "radius": int(r)}
+        if name == "KARE":
+            return poly([[cx - r, cy - r], [cx + r, cy - r], [cx + r, cy + r], [cx - r, cy + r]])
+        if name == "DIKDORTGEN":
+            w, h = 1.4 * r, 0.8 * r
+            return poly([[cx - w, cy - h], [cx + w, cy - h], [cx + w, cy + h], [cx - w, cy + h]])
+        if name == "UCGEN":
+            return poly([[cx, cy - r], [cx - 1.15 * r, cy + 0.92 * r], [cx + 1.15 * r, cy + 0.92 * r]])
+        if name == "ELIPS":
+            return {"name": name, "kind": "ellipse", "box": ((float(cx), float(cy)), (2.8 * r, 1.6 * r), 0.0)}
+        if name == "ALTIGEN":
+            return poly([[cx + r * np.cos(np.radians(a)), cy + r * np.sin(np.radians(a))] for a in range(0, 360, 60)])
+        if name == "YILDIZ":
+            return poly([[cx + (r if k % 2 == 0 else 0.42 * r) * np.cos(np.radians(-90 + 36 * k)),
+                          cy + (r if k % 2 == 0 else 0.42 * r) * np.sin(np.radians(-90 + 36 * k))] for k in range(10)])
+        if name == "DUZ CIZGI":
+            return {"name": name, "kind": "line", "p1": (int(cx - 1.4 * r), int(cy)), "p2": (int(cx + 1.4 * r), int(cy))}
+        return None
+
+    def _stamp_shape(self, value: Any) -> None:
+        """Sesli komutla hazır şekil çizer. ``value``: şekil adı ("DAIRE") veya
+        {"shape", "scale" (1.0), "anchor" ((-1..1, -1..1); 0,0 = çizim alanının ortası)}."""
+        spec = value if isinstance(value, dict) else {"shape": str(value)}
+        name = str(spec.get("shape", ""))
+        r = STAMP_RADIUS * float(spec.get("scale", 1.0))
+        ax, ay = spec.get("anchor", (0.0, 0.0))
+        half_w = 1.45 * r if name in ("DIKDORTGEN", "ELIPS", "DUZ CIZGI") else 1.2 * r
+        mid_x, mid_y = FRAME_W / 2, (DRAW_MIN_Y + HUD_TOP) / 2
+        room_x = max(0.0, FRAME_W / 2 - 30 - half_w)
+        room_y = max(0.0, (HUD_TOP - DRAW_MIN_Y) / 2 - 20 - r)
+        shape = self._stamp_geometry(name, mid_x + ax * room_x, mid_y + ay * room_y, r)
+        if shape is None:
             return
         self._push_undo()
-        self._draw_shape(self.canvas, shape, color, self.brush_thickness)
+        self._draw_shape(self.canvas, shape, self.colors[self.color_index], self.brush_thickness)
 
     # ─── Kaydetme ─────────────────────────────────────────────────────────────
 
@@ -1506,20 +1640,33 @@ class AirCanvas:
             return
         x1 = 20
         x2 = GUIDE_RECT[2] if self.design is not None else FRAME_W - 20
-        width_chars = max(20, (x2 - x1 - 24) // 10)
-        lines = self._wrap(self._tr_ascii(self._answer_text), width_chars)
+        font, scale = cv2.FONT_HERSHEY_SIMPLEX, 0.52
+        max_px = x2 - x1 - 24
+        # Yazı tipi genişliği OpenCV sürümüne göre değişir; satırları piksel genişliğine göre böl.
+        lines: List[str] = []
+        for paragraph in self._tr_ascii(self._answer_text).splitlines():
+            current = ""
+            for word in paragraph.split():
+                trial = f"{current} {word}".strip()
+                if current and cv2.getTextSize(trial, font, scale, 1)[0][0] > max_px:
+                    lines.append(current)
+                    current = word
+                else:
+                    current = trial
+            if current:
+                lines.append(current)
         if not lines:
             return
         if len(lines) > 6:
             lines = lines[:6]
-            lines[-1] = lines[-1][: width_chars - 3] + "..."
+            lines[-1] = lines[-1].rsplit(" ", 1)[0] + " ..."
         y2 = HUD_TOP - 10
         y1 = max(DRAW_MIN_Y + 40, y2 - 14 - 22 * len(lines))
         roi = img[y1:y2, x1:x2]
         cv2.addWeighted(np.full_like(roi, (48, 32, 16)), 0.8, roi, 0.2, 0, dst=roi)
         cv2.rectangle(img, (x1, y1), (x2, y2), (0, 220, 180), 1)
         for i, line in enumerate(lines):
-            cv2.putText(img, line, (x1 + 12, y1 + 24 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
+            cv2.putText(img, line, (x1 + 12, y1 + 24 + 22 * i), font, scale,
                         (235, 245, 240), 1, cv2.LINE_AA)
 
     def _draw_design_panel(self, img: np.ndarray) -> None:
