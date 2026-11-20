@@ -21,6 +21,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from .textutil import strip_reasoning
+
 log = logging.getLogger(__name__)
 
 DEFAULT_URLS = ["http://127.0.0.1:1234/v1", "http://127.0.0.1:11434/v1"]
@@ -126,9 +128,11 @@ class LocalLLMClient:
             self.available = False
             return ""
         try:
-            return (data["choices"][0]["message"].get("content") or "").strip()
-        except (KeyError, IndexError, TypeError):
+            content = data["choices"][0]["message"].get("content") or ""
+        except (KeyError, IndexError, TypeError, AttributeError):
             return ""
+        # Düşünce blokları (<think>) asla seslendirilmez; ayrı "reasoning_content" alanı zaten yok sayılır.
+        return strip_reasoning(content)
 
     def generate(self, prompt: str, system: str = "", temperature: float = 0.3, max_tokens: int = 80,
                  **kwargs) -> str:

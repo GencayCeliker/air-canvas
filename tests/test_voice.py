@@ -61,3 +61,18 @@ def test_stop_speech_interrupts_and_discards_queue():
     time.sleep(0.3)
     assert speaker.said == ["Uzun bir açıklama."]
     assert c._speech_idle()
+
+
+def test_answers_are_cleaned_before_speaking_and_shown_in_a_box():
+    speaker = SlowSpeaker()
+    c = ac.AirCanvas(auto_init=False, speaker=speaker)
+    c._say_async("<think>plan</think>**Duvar** 2 mm olsun 👍", wait=True)
+    assert _wait_until(lambda: speaker.said)
+    assert speaker.said == ["Duvar 2 mm olsun."]
+
+    import numpy as np
+    c._show_answer("## Cevap\n" + "Uzun bir açıklama cümlesi. " * 20)
+    assert c._answer_text.startswith("Cevap") and "#" not in c.assistant_tip
+    img = np.zeros((ac.FRAME_H, ac.FRAME_W, 3), np.uint8)
+    c._draw_hud(img, 30.0)
+    assert img[ac.HUD_TOP - 40, 40].any()      # kutu HUD'un üstünde çizildi

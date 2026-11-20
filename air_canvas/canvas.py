@@ -37,6 +37,7 @@ if __package__ in (None, ""):
     sys.exit(_main())
 
 from .config import default_model_path, default_save_dir
+from .textutil import clean_for_speech, clean_markdown
 
 try:
     import mediapipe as mp
@@ -226,6 +227,8 @@ class AirCanvas:
         self._guide: Optional[Tuple[np.ndarray, np.ndarray]] = None   # (BGR, maske)
         self._assistant = assistant
         self._pending_design = ""
+        self._answer_text = ""             # Uzun AI cevabı için ekrandaki kutu
+        self._answer_until = 0.0
 
         self.buttons = self._build_toolbar()
 
@@ -326,6 +329,9 @@ class AirCanvas:
         Zaten konuşuluyorsa yeni mesaj atlanır (sesler üst üste binmez). ``wait=True`` ise
         atlanmaz; tek bir kuyruk thread'i mesajları sırayla okur — tasarım adımları ve AI cevapları için."""
         if not self.voice_feedback or not text:
+            return
+        text = clean_for_speech(text)
+        if not text:
             return
 
         if wait:
@@ -847,10 +853,17 @@ class AirCanvas:
             if not answer:
                 answer = "Şu an yapay zekâya ulaşamıyorum. Claude anahtarı veya yerel model gerekiyor."
             self.voice_summary = f"Soru: {question}"
-            self.assistant_tip = answer
+            self._show_answer(answer)
             self._say_async(answer, wait=True)
 
         threading.Thread(target=_worker, daemon=True, name="AirCanvasAsk").start()
+
+    def _show_answer(self, text: str) -> None:
+        """Uzun AI cevabını ekranda okunacak kadar süre gösterir (HUD satırı kısa kalır)."""
+        clean = clean_markdown(text)
+        self.assistant_tip = " ".join(clean.splitlines())
+        self._answer_text = clean
+        self._answer_until = time.time() + max(8.0, min(40.0, len(clean) / 12.0))
 
     def _review_drawing(self) -> None:
         """Ekran görüntüsünü (çizim + rehber) AI'a gösterip geri bildirim ister."""
@@ -876,7 +889,7 @@ class AirCanvas:
                 self.ai_busy = False
             if not answer:
                 answer = "Çizimi değerlendirmek için Claude bağlantısı gerekiyor."
-            self.assistant_tip = answer
+            self._show_answer(answer)
             self._say_async(answer, wait=True)
 
         threading.Thread(target=_worker, daemon=True, name="AirCanvasReview").start()
@@ -1433,6 +1446,7 @@ class AirCanvas:
 
         if self.design is not None:
             self._draw_design_panel(img)
+        self._draw_answer_box(img)
 
         if not self.show_hud:
             return
@@ -1469,6 +1483,28 @@ class AirCanvas:
             if current:
                 lines.append(current)
         return lines
+
+    def _draw_answer_box(self, img: np.ndarray) -> None:
+        """AI cevabını HUD'un hemen üstünde, satırlara bölünmüş yarı saydam kutuda gösterir."""
+        if not self._answer_text or time.time() > self._answer_until:
+            return
+        x1 = 20
+        x2 = GUIDE_RECT[2] if self.design is not None else FRAME_W - 20
+        width_chars = max(20, (x2 - x1 - 24) // 10)
+        lines = self._wrap(self._tr_ascii(self._answer_text), width_chars)
+        if not lines:
+            return
+        if len(lines) > 6:
+            lines = lines[:6]
+            lines[-1] = lines[-1][: width_chars - 3] + "..."
+        y2 = HUD_TOP - 10
+        y1 = max(DRAW_MIN_Y + 40, y2 - 14 - 22 * len(lines))
+        roi = img[y1:y2, x1:x2]
+        cv2.addWeighted(np.full_like(roi, (48, 32, 16)), 0.8, roi, 0.2, 0, dst=roi)
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 220, 180), 1)
+        for i, line in enumerate(lines):
+            cv2.putText(img, line, (x1 + 12, y1 + 24 + 22 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
+                        (235, 245, 240), 1, cv2.LINE_AA)
 
     def _draw_design_panel(self, img: np.ndarray) -> None:
         """Sağ tarafta tasarım adı, parça listesi ve geçerli adımın talimatı."""
