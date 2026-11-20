@@ -1012,7 +1012,7 @@ class AirCanvas:
             finally:
                 self.ai_busy = False
             if not answer:
-                answer = "Çizimi değerlendirmek için Claude bağlantısı gerekiyor."
+                answer = "Çizimi değerlendirmek için Claude ya da görsel destekli bir yerel model gerekiyor."
             self._show_answer(answer)
             self._say_async(answer, wait=True)
 

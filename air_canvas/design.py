@@ -131,8 +131,28 @@ def _vec3(value, default=0.0, lo=-MAX_POS, hi=MAX_POS) -> List[float]:
     return vals
 
 
+_KIND_ALIASES = {"box": "box", "cube": "box", "kutu": "box", "cuboid": "box", "rect": "box",
+                 "cylinder": "cylinder", "cyl": "cylinder", "silindir": "cylinder", "cone": "cylinder",
+                 "koni": "cylinder", "hexagon": "cylinder", "prism": "cylinder",
+                 "sphere": "sphere", "ball": "sphere", "küre": "sphere", "kure": "sphere"}
+_OP_SUBTRACT = ("subtract", "difference", "cut", "hole", "remove", "minus", "cikar", "çıkar", "oy")
+
+
+def _unwrap_design(data: Any) -> Any:
+    """Yerel modellerin sık yaptığı sarmalamaları açar: {"design": {...}}, [{...}]."""
+    for _ in range(2):
+        if isinstance(data, list) and len(data) == 1:
+            data = data[0]
+        if isinstance(data, dict) and "parts" not in data and len(data) == 1:
+            inner = next(iter(data.values()))
+            if isinstance(inner, (dict, list)):
+                data = inner
+    return data
+
+
 def normalize_design(data: Any) -> Optional[Dict[str, Any]]:
     """AI'dan gelen tasarımı güvenli sınırlara çeker; kullanılamazsa ``None`` döner."""
+    data = _unwrap_design(data)
     if not isinstance(data, dict):
         return None
     parts_out = []
@@ -143,8 +163,8 @@ def normalize_design(data: Any) -> Optional[Dict[str, Any]]:
         for sh in list(part.get("shapes") or [])[:MAX_SHAPES]:
             if not isinstance(sh, dict):
                 continue
-            kind = sh.get("kind")
-            if kind not in ("box", "cylinder", "sphere"):
+            kind = _KIND_ALIASES.get(str(sh.get("kind") or sh.get("type") or sh.get("shape") or "").lower())
+            if kind is None:
                 continue
             size = _vec3(sh.get("size"), MIN_DIM, 0.0, MAX_DIM)
             if kind == "cylinder":
@@ -161,10 +181,11 @@ def normalize_design(data: Any) -> Optional[Dict[str, Any]]:
             segments = 0 if segments < 3 else min(segments, 128)
             shapes.append({
                 "kind": kind,
-                "op": "subtract" if sh.get("op") == "subtract" else "add",
+                "op": "subtract" if str(sh.get("op") or sh.get("operation") or "").lower() in _OP_SUBTRACT
+                      else "add",
                 "size": size,
-                "pos": _vec3(sh.get("pos")),
-                "rot": _vec3(sh.get("rot"), 0.0, -360.0, 360.0),
+                "pos": _vec3(sh.get("pos", sh.get("position"))),
+                "rot": _vec3(sh.get("rot", sh.get("rotation")), 0.0, -360.0, 360.0),
                 "segments": segments,
             })
         if not any(s["op"] == "add" for s in shapes):
