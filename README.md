@@ -8,7 +8,7 @@
 
 **Draw in the air with your finger.** Air Canvas tracks your hand through an ordinary webcam, turns your index finger into a brush, cleans up rough circles, rectangles and triangles into perfect shapes, and understands Turkish voice commands.
 
-<!-- TODO: add demo GIF, e.g. docs/demo.gif -->
+<p align="center"><img src="docs/demo.gif" alt="Air Canvas: a drone frame from the built-in template, the AI checking the drawing, then a 5-inch propeller" width="640"></p>
 
 > The on-screen interface, voice commands and spoken feedback are in **Turkish**. Air Canvas started as a module of my desktop assistant project Moly/Jarvis and now also runs as a standalone app.
 
@@ -50,6 +50,7 @@ air-canvas --camera 1 --no-voice
 air-canvas --windowed          # start in a window instead of fullscreen
 air-canvas --no-shape-assist   # start with shape recognition off (toggle: A)
 air-canvas --design "dron"     # open with a 3D design ready
+air-canvas --project dron     # open the project folder projeler/dron (sizes, photos, STL parts)
 air-canvas --offline           # no internet: local LLM, Whisper and the local voice
 air-canvas --ai local          # local LLM designs, but online speech is still allowed
 air-canvas --help
@@ -88,6 +89,10 @@ Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an
 5. Say *"STL"* (or press `X`). Each part is written as its own STL, lying flat on the bed, together with an assembly preview, `talimatlar.txt` and `tasarim.json`, in `<save dir>/3D/`.
 
 **Which AI is used?** With the `ai` extra and an Anthropic credential (`ANTHROPIC_API_KEY` or an `ant auth login` profile), Claude (`claude-opus-5-5`, structured JSON output) designs anything you can describe. Without Claude, a matching built-in template is used first, because small local models tend to return rough boxes and cylinders even for a drone or a bolt. Anything without a template goes to a local LLM (LM Studio / Ollama); a one-part, two-shape answer to anything but a simple container is sent back once. The built-in templates work offline: bolt, nut, drone, drone arm, propeller (inch and blade count from speech, e.g. *"5 inç pervane"*), brushless motor mock-up, car, wheel, fan grill, SSD bracket. Choose explicitly with `--ai auto|claude|local|template`.
+
+| Drone frame, arm highlighted | The AI checks your drawing | 5-inch propeller |
+| --- | --- | --- |
+| ![Drone template](docs/tasarim-dron.png) | ![Drawing check](docs/cizim-kontrolu.png) | ![Propeller](docs/pervane.png) |
 
 ### Project folder
 
@@ -194,7 +199,7 @@ tests/           pytest suite, synthetic input only
 
 ## Roadmap
 
-- [ ] Demo GIF
+- [x] Demo GIF
 - [ ] English voice commands and UI
 - [ ] Two-hand gestures (zoom / move the canvas)
 - [x] Offline speech recognition (faster-whisper)

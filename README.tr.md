@@ -8,7 +8,7 @@
 
 **Parmağınla havaya çiz.** Air Canvas sıradan bir web kamerasıyla elini takip eder, işaret parmağını fırçaya dönüştürür, elle çizdiğin yamuk daire, dikdörtgen ve üçgenleri kusursuz şekillere çevirir ve Türkçe sesli komutları anlar.
 
-<!-- TODO: demo GIF'i ekle, ör. docs/demo.gif -->
+<p align="center"><img src="docs/demo.gif" alt="Air Canvas: hazır şablondan dron gövdesi, yapay zekânın çizim kontrolü, ardından 5 inç pervane" width="640"></p>
 
 > Air Canvas, masaüstü asistan projem Moly/Jarvis'in bir modülü olarak başladı; artık tek başına çalışan bir uygulama olarak da kullanılabiliyor.
 
@@ -50,6 +50,7 @@ air-canvas --camera 1 --no-voice
 air-canvas --windowed          # tam ekran yerine pencerede başla
 air-canvas --no-shape-assist   # şekil tanıma kapalı başla (aç/kapat: A)
 air-canvas --design "dron"     # açılışta bir 3D tasarım hazırla
+air-canvas --project dron     # projeler/dron klasörünü aç (ölçüler, fotoğraflar, STL parçalar)
 air-canvas --offline           # internetsiz: yerel LLM, Whisper ve yerel ses
 air-canvas --ai local          # tasarımı yerel LLM yapsın (çevrimiçi ses tanıma serbest)
 air-canvas --help
@@ -74,18 +75,39 @@ air-canvas --help
 | `N` / `P` | Sonraki / önceki tasarım adımı | `R` | Adımı tekrarla |
 | `G` | 3D rehberi göster/gizle | `X` | Tasarımı STL olarak kaydet |
 | `K` | Yapay zekâ çizimini kontrol etsin | `T` | Tasarım taslağını tuvale çiz |
+| `I` | 3D modeli incele (sürükle / ok tuşları döndürür, tekerlek yakınlaştırır, `Esc` kapatır) | | |
 
 ## 3D tasarım asistanı
 
-`V` tuşuna bas ve ne yapmak istediğini söyle. İçinde *tasarla*, *3D* ya da *vida*, *somun*, *dron*, *araba*, *tekerlek*, *fan*, *SSD* gibi bir nesne geçen her cümle bir tasarım başlatır.
+`V` tuşuna bas ve ne yapmak istediğini söyle. İçinde *tasarla*, *3D* ya da *vida*, *somun*, *dron*, *pervane*/*kanat*, *motor*, *araba*, *tekerlek*, *fan*, *SSD* gibi bir nesne geçen her cümle bir tasarım başlatır.
 
 1. Yapay zekâ nesneyi basılabilir parçalara ayırır (delikler, standart ölçüler, en az 1,2 mm duvar, dik sarkma yok) ve her parçayı kutu, silindir/koni/altıgen ve kürelerle modeller.
    Tasarımı belirgin biçimde değiştirecek bir ölçü eksikse yapay zekâ önce sorar (*"Kaç inç pervane kullanacaksın?"*) ve cevabını dinler. *"Sen karar ver"* dersen standart ölçüler kullanılır, *"vazgeç"* dersen istek iptal edilir. İçinde sayı geçen isteklerde soru sorulmaz.
 2. Model, çizdiğin çizgilerin altında yarı saydam bir 3D rehber olarak görünür. Sıradaki parça vurgulanır, sağdaki panelde talimatı ve milimetre cinsinden ölçüsü yazar.
 3. Parçalar arasında *"sonraki"* / *"önceki"* / *"tekrar"* diyerek gezin. *"Kontrol et"* deyince yapay zekâ çizimine bakar; istediğini de sorabilirsin (*"duvar kalınlığı kaç olmalı?"*). *"Taslağı çiz"* (veya `T`) tasarımın dış hatlarını tuvale mürekkep olarak çizer; üzerinden geçebilir, kaydedebilir veya geri alabilirsin.
-4. *"STL"* de (veya `X`'e bas). Her parça tablaya düz oturan ayrı bir STL olarak; montaj önizlemesi, `talimatlar.txt` ve `tasarim.json` ile birlikte `<kayıt klasörü>/3D/` altına yazılır.
+4. Modeli incelemek için *"modeli incele"* de, `I`'ya veya **INCELE** düğmesine bas. Bu sırada çizim durur; fareyle veya işaret parmağınla sürükleyerek (ya da ok tuşlarıyla) döndür, tekerlekle yakınlaştır. `N`/`P` tek parçayı milimetre ölçüsüyle, `R` tüm montajı gösterir. `I` veya `Esc` çizime döndürür.
+5. *"STL"* de (veya `X`'e bas). Her parça tablaya düz oturan ayrı bir STL olarak; montaj önizlemesi, `talimatlar.txt` ve `tasarim.json` ile birlikte `<kayıt klasörü>/3D/` altına yazılır.
 
-**Hangi yapay zekâ kullanılıyor?** `ai` eki kuruluysa ve bir Anthropic kimlik bilgisi (`ANTHROPIC_API_KEY` veya `ant auth login` profili) varsa, tarif edebildiğin her şeyi Claude (`claude-opus-5-5`, yapılandırılmış JSON çıktı) tasarlar. Claude yoksa yerel dil modeli (LM Studio / Ollama) denenir. Yerleşik şablonlar internet olmadan da çalışır ve son çaredir: cıvata, somun, dron, dron kolu, araba, tekerlek, fan ızgarası, SSD braketi. Açıkça seçmek için: `--ai auto|claude|local|template`.
+**Hangi yapay zekâ kullanılıyor?** `ai` eki kuruluysa ve bir Anthropic kimlik bilgisi (`ANTHROPIC_API_KEY` veya `ant auth login` profili) varsa, tarif edebildiğin her şeyi Claude (`claude-opus-5-5`, yapılandırılmış JSON çıktı) tasarlar. Claude yoksa isteğe uyan yerleşik şablon önce kullanılır; küçük yerel modeller dron veya vida için bile kaba kutu ve silindirler üretiyor. Şablonu olmayan her şey yerel dil modeline (LM Studio / Ollama) gider; basit bir kap dışında tek parça, iki şekilli bir cevap bir kez geri gönderilir. Yerleşik şablonlar internet olmadan da çalışır: cıvata, somun, dron, dron kolu, pervane (inç ve kanat sayısı konuşmadan, ör. *"5 inç pervane"*), fırçasız motor maketi, araba, tekerlek, fan ızgarası, SSD braketi. Açıkça seçmek için: `--ai auto|claude|local|template`.
+
+| Dron gövdesi, kol vurgulu | Yapay zekâ çizimi kontrol ediyor | 5 inç pervane |
+| --- | --- | --- |
+| ![Dron şablonu](docs/tasarim-dron.png) | ![Çizim kontrolü](docs/cizim-kontrolu.png) | ![Pervane](docs/pervane.png) |
+
+### Proje klasörü
+
+Tek bir nesne üzerinde kendi referanslarınla çalışmak için *"dron projesini aç"* de (veya `--project dron` ile başlat). `<kayıt klasörü>/projeler/dron/` ilk kullanımda oluşturulur:
+
+```
+bilgi.txt     ölçüler ve notlar, ör. "pervane: 7 inç", "motor: 2207", "kol: 150 mm", "fc: 20 mm", "vida: M3x12"
+foto/         referans fotoğraflar
+referans/     hazır STL parçalar
+```
+
+- `anahtar: değer` satırları, sen sayı söylemediğinde yerleşik şablonlara gider (pervane boyu ve kanat sayısı, kol uzunluğu, motor ve uçuş kontrolcüsü delik aralığı, vida ölçüsü). Tüm notlar Claude'a veya yerel modele bağlam olarak verilir ve ölçü sorusu sorulmaz.
+- Fotoğraflar bir kez görsel modele (Claude veya yerel VL modeli) gösterilir. Model yapıyı (tip, parçalar, yerleşim) tasarımcı için özetler; ölçüler her zaman `bilgi.txt`'den gelir, çünkü fotoğraftan milimetre güvenilir okunamaz.
+- `referans/` içindeki her su geçirmez STL bir parça olur: 3D rehberde görünür, montajda tasarımın yanına yerleşir ve onunla birlikte dışa aktarılır. Açık ağlar ve çok büyük dosyalar (80 000 üçgenden fazla) mesajla atlanır. İndirilen modellerin lisansına dikkat et; oyun asetleri genelde su geçirmez değildir ve gerçek ölçü taşımaz, onları yalnızca görsel referans olarak kullan.
+- Kapatmak için *"projeyi kapat"* de.
 
 ### İnternetsiz / yerel model
 
@@ -98,7 +120,7 @@ air-canvas --offline
 2. Whisper konuşma modeli (varsayılan `small`) ilk kullanımda **bir kez** indirilir; sonra yerel önbellekten, hiçbir ağ isteği yapılmadan yüklenir. Tamamen internetsiz bir bilgisayar için bir kez internete bağlıyken çalıştır ya da `AIR_CANVAS_WHISPER_MODEL` ile yerel bir model klasörü göster. Whisper'a komut kelimeleri ipucu olarak verilir; bu sayede kısa Türkçe komutlar çok daha güvenilir tanınır.
 3. Sesli geri bildirimde Türkçe Windows sesi (*Microsoft Tolga*) kullanılır; ses yalnızca yeni (OneCore) ses olarak kurulu olsa da çalışır. Ses yoksa **Windows Ayarlar → Saat ve dil → Konuşma** bölümünden ekle.
 
-Yanıtlar akış olarak alınır ve HUD'da ilerleme görünür (`412 token (46/sn)`). `AIR_CANVAS_LLM_TIMEOUT` (varsayılan 180 sn), sunucunun **hiç veri göndermeden** bekleyebileceği süredir; yavaş ama çalışan bir model yarıda kesilmez. Model tamamen GPU'daysa 7B bir model birkaç saniyede tasarlar. HUD'da *yavas* yazıyorsa model işlemcide çalışıyor demektir (bkz. Sorun giderme). Model geçersiz JSON döndürürse hatası söylenerek bir kez daha istenir; yine olmazsa uyan yerleşik şablon kullanılır.
+Yanıtlar akış olarak alınır ve HUD'da ilerleme görünür (`412 token (46/sn)`). `AIR_CANVAS_LLM_TIMEOUT` (varsayılan 180 sn), sunucunun **hiç veri göndermeden** bekleyebileceği süredir; yavaş ama çalışan bir model yarıda kesilmez. Model tamamen GPU'daysa 7B bir model birkaç saniyede tasarlar. HUD'da *yavas* yazıyorsa model işlemcide çalışıyor demektir (bkz. Sorun giderme). Model geçersiz JSON döndürürse hatası söylenerek bir kez daha istenir.
 
 ## Ayarlar
 
@@ -113,7 +135,7 @@ Yanıtlar akış olarak alınır ve HUD'da ilerleme görünür (`412 token (46/s
 | `AIR_CANVAS_LLM_VISION_MODEL` | çizim kontrolü (görsel) modeli; varsayılan: adında "vl"/"vision" geçen model |
 | `ANTHROPIC_API_KEY` | 3D tasarım asistanında Claude'u etkinleştirir |
 | `AIR_CANVAS_CLAUDE_MODEL` | `claude-opus-5-5` |
-| `AIR_CANVAS_AI` | `auto` (Claude → yerel LLM → şablon), `claude`, `local` veya `template` |
+| `AIR_CANVAS_AI` | `auto` (Claude → şablon → yerel LLM), `claude`, `local` veya `template` |
 | `AIR_CANVAS_OFFLINE` | `1` = `--offline` ile aynı |
 | `AIR_CANVAS_STT` | `auto` (önce Google, sonra Whisper), `google` veya `whisper` |
 | `AIR_CANVAS_WHISPER_MODEL` | `small` (veya `tiny`/`base`/`medium` ya da yerel klasör) |
@@ -154,7 +176,8 @@ air_canvas/
   llm.py         İsteğe bağlı yerel dil modeli istemcisi (LM Studio / Ollama): özet, tasarım, soru, çizim kontrolü
   textutil.py    Model çıktısını seslendirmeye hazırlar (düşünce blokları, markdown, emoji)
   design.py      3D tasarımlar: parçalar, katı modelleme (manifold3d), STL, 3D önizleme, şablonlar
-  ai.py          Tasarım asistanı: önce Claude, sonra yerel dil modeli, sonra yerleşik şablonlar
+  project.py     Proje klasörleri: bilgi.txt ölçüleri, referans fotoğraflar, referans STL parçalar
+  ai.py          Tasarım asistanı: önce Claude, sonra yerleşik şablonlar, sonra yerel dil modeli
   config.py      Varsayılan yollar (ortam değişkenleriyle değiştirilebilir)
   __main__.py    Komut satırı uygulaması (air-canvas)
 tests/           pytest testleri, yalnızca sentetik veri
@@ -176,7 +199,7 @@ tests/           pytest testleri, yalnızca sentetik veri
 
 ## Yol haritası
 
-- [ ] Demo GIF'i
+- [x] Demo GIF'i
 - [ ] İngilizce sesli komutlar ve arayüz
 - [ ] İki elle hareketler (tuvali yakınlaştırma / kaydırma)
 - [x] İnternetsiz konuşma tanıma (faster-whisper)
