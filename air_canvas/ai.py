@@ -9,7 +9,8 @@ AIR_CANVAS_AI               Hangi yapay zekâ kullanılsın (``--ai`` ile de se�
                             ``claude``   Claude → şablon
                             ``local``    yerel LLM → şablon; hiçbir veri internete gitmez
                             ``template`` yalnızca yerleşik şablonlar
-AIR_CANVAS_LLM_TIMEOUT      Yerel modelin tasarım için bekleme süresi, sn (varsayılan: 300)
+AIR_CANVAS_LLM_TIMEOUT      Yerel model hiç veri göndermezse en fazla kaç sn beklensin (varsayılan: 180).
+                            Yanıt akış olarak geldiği için çalışan ama yavaş bir model yarıda kesilmez.
 AIR_CANVAS_CLARIFY          ``0`` ise tasarımdan önce ölçü sorusu sorulmaz
 
 Yerel LLM için LM Studio / Ollama (bkz. ``llm.py``) kullanılır.
@@ -20,6 +21,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import design as dsg
@@ -80,10 +82,13 @@ LOCAL_DESIGN_EXAMPLE = {
 
 LOCAL_DESIGN_RULES = """
 Cikti kurallari: YALNIZCA tek bir JSON nesnesi dondur; aciklama, markdown veya kod blogu yazma.
+JSON'u girintisiz, satir atlamadan, tek satir halinde (ornekteki gibi sikistirilmis) yaz.
 Alanlar: name, summary, parts (name, purpose, step, print_orientation, shapes, placements), print_tips.
 Her shape: kind (box|cylinder|sphere), op (add|subtract), size [3 sayi], pos [3 sayi], rot [3 sayi], segments (tamsayi).
 Ornek bicim:
-""" + json.dumps(LOCAL_DESIGN_EXAMPLE, ensure_ascii=False)
+""" + json.dumps(LOCAL_DESIGN_EXAMPLE, ensure_ascii=False, separators=(",", ":"))
+
+SLOW_TOKENS_PER_SEC = 10.0   # Bunun altında HUD'da "yavaş" uyarısı gösterilir
 
 HELP_SYSTEM = """Sen Air Canvas'in 3D tasarim ve cizim asistanisin. Kullanici havada parmagiyla ciziyor ve seninle
 sesli konusuyor. Cevaplarin sesli okunacak: Turkce, en fazla 3 kisa cumle, madde isareti veya markdown kullanma.
@@ -153,7 +158,7 @@ class DesignAssistant:
         self.mode = mode if mode in AI_MODES else "auto"
         self._claude_disabled = not use_claude or self.mode in ("local", "template")
         self.clarify_enabled = os.getenv("AIR_CANVAS_CLARIFY", "1").strip() not in ("0", "false", "no", "hayir")
-        self.local_timeout = float(_env_int("AIR_CANVAS_LLM_TIMEOUT", 300))
+        self.local_timeout = float(_env_int("AIR_CANVAS_LLM_TIMEOUT", 180))
         self.last_source = ""
         # İsteğe bağlı ilerleme bildirimi: status_callback("Yerel model tasarlıyor ...")
         self.status_callback: Optional[Callable[[str], None]] = None
@@ -164,6 +169,24 @@ class DesignAssistant:
                 self.status_callback(text)
             except Exception:
                 pass
+
+    def _progress_reporter(self, label: str) -> Callable[[int], None]:
+        """Akış sırasında saniyede en fazla bir kez "N token (hız/sn)" durumu bildiren fonksiyon."""
+        started = time.time()
+        last = [0.0]
+
+        def report(tokens: int) -> None:
+            now = time.time()
+            if now - last[0] < 1.0:
+                return
+            last[0] = now
+            rate = tokens / max(now - started, 1e-3)
+            text = f"{label} ... {tokens} token ({rate:.0f}/sn)"
+            if rate < SLOW_TOKENS_PER_SEC and now - started > 15:
+                text += " - yavas: GPU bellegi dolu olabilir, LM Studio'da tek model yukleyin"
+            self._status(text)
+
+        return report
 
     # ─── Claude ───────────────────────────────────────────────────────────────
 
@@ -291,10 +314,12 @@ class DesignAssistant:
                                         "Bunu 3D baskiya uygun parcalar halinde tasarla ve JSON dondur."},
         ]
         for attempt in range(2):
-            self._status("Yerel model tasarliyor" + (" (tekrar deniyor)" if attempt else "") + " ...")
+            label = "Yerel model tasarliyor" + (" (tekrar deniyor)" if attempt else "")
+            self._status(label + " ...")
             try:
                 raw = self._local_chat(llm, messages, "design", temperature=0.2, max_tokens=8000,
-                                       timeout=self.local_timeout, json_schema=dsg.DESIGN_SCHEMA)
+                                       timeout=self.local_timeout, json_schema=dsg.DESIGN_SCHEMA,
+                                       on_progress=self._progress_reporter(label))
             except Exception as exc:
                 log.warning("[AI] Yerel LLM tasarim istegi basarisiz: %s", exc)
                 return None

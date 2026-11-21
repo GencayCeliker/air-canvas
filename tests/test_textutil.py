@@ -25,9 +25,8 @@ def test_clean_for_speech_removes_markdown_and_emoji():
 
 
 def test_local_llm_chat_never_returns_reasoning(monkeypatch):
-    client = LocalLLMClient.__new__(LocalLLMClient)
-    client.available, client.base_url, client.model, client.timeout = True, "http://x/v1", "qwen3", 5
-    reply = {"choices": [{"message": {"content": "<think>uzun düşünce</think>Cevap burada.",
-                                      "reasoning_content": "gizli"}}]}
-    monkeypatch.setattr(client, "_request", lambda *a, **k: reply)
+    monkeypatch.setattr(LocalLLMClient, "_probe", lambda self: False)
+    client = LocalLLMClient(model="qwen3", timeout=5)
+    client.available, client.base_url = True, "http://x/v1"
+    monkeypatch.setattr(client, "_stream", lambda *a, **k: "<think>uzun düşünce</think>Cevap burada.")
     assert client.generate("soru") == "Cevap burada."
