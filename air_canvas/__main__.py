@@ -37,8 +37,12 @@ def main(argv=None) -> int:
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
-                        format="%(levelname)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if args.verbose:
+        # Yalnızca Air Canvas'ın ayrıntıları; comtypes/matplotlib/httpx gibi kütüphanelerin DEBUG yığını değil.
+        logging.getLogger("air_canvas").setLevel(logging.DEBUG)
+    for noisy in ("httpx", "httpcore", "huggingface_hub", "faster_whisper", "comtypes"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     canvas = AirCanvas(save_dir=args.save_dir, camera_index=args.camera, ai_mode=args.ai,
                        offline=True if args.offline else None)

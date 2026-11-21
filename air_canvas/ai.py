@@ -230,6 +230,17 @@ class DesignAssistant:
             log.info("[AI] Claude kullanilamiyor: %s", exc)
             self._claude_disabled = True
             return None
+        except TypeError as exc:
+            # SDK, hiç kimlik bilgisi yoksa (ANTHROPIC_API_KEY / profil) istek anında TypeError fırlatır.
+            if "authentication" in str(exc).lower():
+                log.info("[AI] Claude kimlik bilgisi yok (ANTHROPIC_API_KEY); yerel LLM / sablon kullanilacak.")
+                self._claude_disabled = True
+                return None
+            log.warning("[AI] Claude istegi basarisiz: %s", exc)
+            return None
+        except Exception as exc:   # Beklenmeyen her hata: tasarım yerel modele / şablona düşsün
+            log.warning("[AI] Claude istegi basarisiz: %s", exc)
+            return None
 
         if response.stop_reason == "refusal":
             log.info("[AI] Claude istegi reddetti: %s", getattr(response, "stop_details", None))

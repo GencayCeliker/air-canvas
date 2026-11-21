@@ -157,6 +157,31 @@ def test_claude_refusal_falls_back_to_template():
     assert source == "sablon" and design.name == "Model araba"
 
 
+def test_missing_claude_credentials_fall_back_instead_of_crashing(monkeypatch):
+    """Gerçek SDK, ANTHROPIC_API_KEY yoksa istek anında TypeError fırlatır; tasarım çökmemeli."""
+    anthropic = pytest.importorskip("anthropic")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+
+    class NoAuth:
+        class beta:
+            class messages:
+                calls = 0
+
+                @classmethod
+                def create(cls, **kwargs):
+                    cls.calls += 1
+                    raise TypeError('"Could not resolve authentication method. Expected one of api_key, '
+                                    'auth_token, or credentials to be set."')
+
+    assert anthropic  # SDK kurulu: _call_claude onun hata sınıflarını kullanır
+    assistant = DesignAssistant(client=NoAuth())
+    design, source = assistant.design("araba tasarla")
+    assert source == "sablon" and design.name == "Model araba"
+    assistant.design("araba tasarla")
+    assert NoAuth.beta.messages.calls == 1          # bir kez denendi, sonra Claude kapatıldı
+
+
 def test_without_any_ai_unknown_object_fails_cleanly():
     design, source = DesignAssistant(use_claude=False).design("uzay istasyonu")
     assert design is None and source == ""
