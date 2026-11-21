@@ -107,7 +107,7 @@ Replies are streamed, and the HUD shows progress (`412 token (46/sn)`). `AIR_CAN
 | `AIR_CANVAS_SAVE_DIR` | `~/Pictures/AirCanvas` |
 | `AIR_CANVAS_MODEL` | user cache folder (`%LOCALAPPDATA%\air_canvas` / `~/.cache/air_canvas`) |
 | `AIR_CANVAS_VOICE` | `tr-TR-AhmetNeural` (or `tr-TR-EmelNeural`) |
-| `AIR_CANVAS_LLM_URL` | tries LM Studio `:1234` and Ollama `:11434` |
+| `AIR_CANVAS_LLM_URL` | tries LM Studio `:1234` and Ollama `:11434`; one URL or several comma-separated URLs tried in order |
 | `AIR_CANVAS_LLM_MODEL` | one model for every task (empty: picked per task) |
 | `AIR_CANVAS_LLM_DESIGN_MODEL` | model for 3D designs (JSON); default: a model with "coder" in its name |
 | `AIR_CANVAS_LLM_VISION_MODEL` | model for drawing checks (images); default: a model with "vl"/"vision" in its name |

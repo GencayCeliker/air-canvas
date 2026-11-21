@@ -161,3 +161,11 @@ def test_local_design_passes_progress_callback():
     a = DesignAssistant(local_llm=fake, mode="local")
     assert a._local_design(fake, "kutu") is None
     assert callable(fake.kwargs["on_progress"]) and fake.kwargs["timeout"] == a.local_timeout
+
+
+def test_server_url_setting_accepts_several_addresses_in_order(monkeypatch):
+    monkeypatch.setattr(LocalLLMClient, "_probe", lambda self: False)
+    monkeypatch.setenv("AIR_CANVAS_LLM_URL", " http://127.0.0.1:9000/v1 , http://127.0.0.1:1234/v1,")
+    assert LocalLLMClient().base_urls == ["http://127.0.0.1:9000/v1", "http://127.0.0.1:1234/v1"]
+    monkeypatch.setenv("AIR_CANVAS_LLM_URL", "")
+    assert LocalLLMClient().base_urls == llm_mod.DEFAULT_URLS

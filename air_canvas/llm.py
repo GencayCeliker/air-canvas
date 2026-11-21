@@ -4,7 +4,8 @@ OpenAI uyumlu yerel sunucuları dener (ek paket gerekmez):
     LM Studio  http://127.0.0.1:1234/v1
     Ollama     http://127.0.0.1:11434/v1
 
-AIR_CANVAS_LLM_URL           Belirli bir sunucu adresi (ör. http://127.0.0.1:1234/v1)
+AIR_CANVAS_LLM_URL           Sunucu adresi; virgülle birden çok adres verilebilir, sırayla denenir
+                             (ör. http://127.0.0.1:1234/v1,http://127.0.0.1:11434/v1)
 AIR_CANVAS_LLM_MODEL         Her iş için kullanılacak model (boşsa işe göre otomatik seçilir)
 AIR_CANVAS_LLM_DESIGN_MODEL  3D tasarım (JSON) için model — varsayılan: adında "coder" geçen model
 AIR_CANVAS_LLM_VISION_MODEL  Çizim kontrolü (görsel) için model — varsayılan: adında "vl"/"vision" geçen model
@@ -53,8 +54,8 @@ def _pick(ids: List[str], hints) -> Optional[str]:
 
 class LocalLLMClient:
     def __init__(self, base_urls: Optional[List[str]] = None, model: Optional[str] = None, timeout: float = 20.0):
-        env_url = os.getenv("AIR_CANVAS_LLM_URL")
-        self.base_urls = base_urls or ([env_url] if env_url else list(DEFAULT_URLS))
+        env_urls = [u.strip() for u in os.getenv("AIR_CANVAS_LLM_URL", "").split(",") if u.strip()]
+        self.base_urls = base_urls or env_urls or list(DEFAULT_URLS)
         self.model = model or os.getenv("AIR_CANVAS_LLM_MODEL") or ""
         self._fixed_model = bool(self.model)
         self.timeout = timeout
