@@ -831,6 +831,83 @@ def template_ssd_bracket() -> Dict[str, Any]:
     }
 
 
+def template_propeller(inch: float = 5.0, blades: int = 3) -> Dict[str, Any]:
+    inch = max(2.0, min(10.0, inch))
+    blades = 2 if blades == 2 else 3
+    r = inch * 25.4 / 2
+    hub_d, hub_h, t, pitch = 12.0, 6.0, 1.6, 18.0
+    # Geniş kanat eğimli dururken tablanın altına inmesin diye veter 14 mm ile sınırlı.
+    chord = min(14.0, max(8.0, inch * 2.5))
+    shaft = 5.2 if inch >= 4 else 2.0
+    root = hub_d / 2 - 2                 # kanat göbeğe 2 mm gömülür
+    blade_len = r - chord / 2 - root     # ucu yuvarlak: yarım veter kadar kısa
+    shapes = [_s("cylinder", (hub_d, hub_d, hub_h), (0, 0, hub_h / 2))]
+    for k in range(blades):
+        a = 360.0 * k / blades
+        ca, sa = math.cos(math.radians(a)), math.sin(math.radians(a))
+        mid, tip = root + blade_len / 2, r - chord / 2
+        shapes.append(_s("box", (blade_len, chord, t), (mid * ca, mid * sa, hub_h / 2), rot=(pitch, 0, a)))
+        shapes.append(_s("cylinder", (chord, chord, t), (tip * ca, tip * sa, hub_h / 2), rot=(pitch, 0, a)))
+    shapes.append(_s("cylinder", (shaft, shaft, hub_h * 3), (0, 0, hub_h / 2), op="subtract"))
+    name = f"{inch:g} inç {blades} kanatlı pervane"
+    return {
+        "name": name,
+        "summary": (f"{inch * 25.4:.0f} milimetre çapında, {blades} kanatlı, {pitch:g} derece hatveli pervane; "
+                    f"göbek deliği {shaft:g} milimetre."),
+        "parts": [{
+            "name": "Pervane",
+            "purpose": "Motorun milinde döner, itiş üretir.",
+            "step": (f"Önce {hub_d:g} milimetre çapında, {hub_h:g} milimetre yüksek göbeği çiz ve ortasına "
+                     f"{shaft:g} milimetrelik mil deliği aç. Sonra göbekten {r:.0f} milimetre dışarı uzanan "
+                     f"{blades} kanadı eşit aralıkla çiz; her biri {chord:g} milimetre geniş, ucu yuvarlak, "
+                     f"{pitch:g} derece eğik."),
+            "print_orientation": "Göbek tablada. Kanatlar eğik olduğu için ağaç destek kullanın. PETG veya naylon.",
+            "shapes": shapes,
+            "placements": _one(),
+        }],
+        "print_tips": [
+            "Basılan pervane maket ve deneme içindir; uçuşta dengeli fabrika pervanesi kullanın.",
+            "Döndürmeden önce göbeği bir çivi üzerinde dengeleyin; ağır kanadı zımparalayın.",
+            "Kanat eğimi için ağaç destek ve 0.12 milimetre katman kullanın.",
+        ],
+    }
+
+
+def template_motor() -> Dict[str, Any]:
+    # 2207 sınıfı fırçasız motor; tabandaki 16 mm delik aralığı dron kolu şablonuna uyar.
+    base_h, bell_d, bell_h = 3.0, 28.0, 13.0
+    top = base_h + bell_h
+    shapes = [
+        _s("cylinder", (27, 27, base_h), (0, 0, base_h / 2)),
+        _s("cylinder", (bell_d, bell_d, bell_h), (0, 0, base_h + bell_h / 2)),
+    ]
+    for k in range(6):   # Çan yanındaki soğutma pencereleri
+        a = k * 60.0
+        shapes.append(_s("box", (6, 8, 6), (bell_d / 2 * math.cos(math.radians(a)), bell_d / 2 * math.sin(math.radians(a)),
+                                             base_h + bell_h / 2), op="subtract", rot=(0, 0, a)))
+    shapes += [
+        _s("cylinder", (5, 5, 12), (0, 0, top + 6)),   # M5 mil
+        *_motor_holes(0, base_h, 16.0),
+    ]
+    return {
+        "name": "2207 fırçasız motor maketi",
+        "summary": ("28 milimetre çaplı, 5 inç dron sınıfı fırçasız motor maketi. Tabandaki 16 milimetre aralıklı "
+                    "M3 delikler dron koluna uyar; montaj provası ve görsel için."),
+        "parts": [{
+            "name": "Motor",
+            "purpose": "Kol üzerindeki motor yerini ve mil yüksekliğini gösterir.",
+            "step": ("27 milimetre çapında, 3 milimetre kalın taban diskini çiz. Üstüne 28 milimetre çapında, 13 milimetre "
+                     "yüksek çanı ekle ve yanına altı soğutma penceresi aç. Tepeye 5 milimetre çapında, 12 milimetre "
+                     "boyunda mili çiz. Tabana 16 milimetre aralıklı dört M3 delik aç."),
+            "print_orientation": "Taban tablada, mil yukarı. PLA, yüzde 20 doluluk.",
+            "shapes": shapes,
+            "placements": _one(),
+        }],
+        "print_tips": ["Maket gerçek motor değildir; ölçüler 2207 motorlarla aynıdır.",
+                       "Mil ince olduğu için 0.12 milimetre katman kullanın."],
+    }
+
+
 def _num_after(text: str, pattern: str) -> Optional[float]:
     m = re.search(pattern, text)
     if not m:
@@ -857,7 +934,13 @@ def match_template(text: str) -> Optional[Dict[str, Any]]:
         if length == m:
             length = 12
         return template_bolt(m, max(4.0, min(80.0, length)))
-    if has("dron", "drone", "drön", "quadcopter", "kuadkopter", "multikopter"):
+    if has("pervane", "kanat", "prop"):   # "dronun kanatları" dron değil pervane ister
+        inch = _num_after(low, r"(\d+(?:[.,]\d+)?)\s*(?:inç|inc|inch|in\b|\")") or 5
+        blades = 2 if re.search(r"\b(2|iki|çift|cift)\s*kanat", low) else 3
+        return template_propeller(inch, blades)
+    if has("motor"):
+        return template_motor()
+    if has("dron","drone", "drön", "quadcopter", "kuadkopter", "multikopter"):
         return template_drone_arm() if has("kol") else template_drone()
     if has("teker", "jant", "lastik"):
         return template_wheel()
@@ -873,7 +956,7 @@ def match_template(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-TEMPLATE_KEYWORDS = ("somun", "vida", "cıvata", "civata", "bulon", "dron", "drone", "drön", "quadcopter",
+TEMPLATE_KEYWORDS = ("somun", "vida", "cıvata", "civata", "bulon", "pervane", "kanat", "prop", "motor", "dron", "drone", "drön", "quadcopter",
                      "kuadkopter", "multikopter", "teker", "jant", "lastik", "araba", "araç", "arac", "otomobil",
                      "fan", "ızgara", "izgara", "ssd", "hdd", "harddisk", "bilgisayar")
-TEMPLATE_HINT = "vida, somun, dron, dron kolu, araba, tekerlek, fan ızgarası, SSD braketi"
+TEMPLATE_HINT = "vida, somun, dron, dron kolu, pervane, motor, araba, tekerlek, fan ızgarası, SSD braketi"

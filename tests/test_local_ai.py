@@ -49,17 +49,31 @@ class ExplodingClaude:
         pytest.fail("Yerel modda Claude çağrılmamalı")
 
 
-def _drone_like():
+def _drone_like(name="Yerel dron"):
     data = json.loads(json.dumps(LOCAL_DESIGN_EXAMPLE))
-    data["name"] = "Yerel dron"
+    data["name"] = name
+    data["parts"][0]["shapes"].append({"kind": "cylinder", "op": "subtract", "size": [3.2, 3.2, 10],
+                                       "pos": [20, 0, 2], "rot": [0, 0, 0], "segments": 0})
     return json.dumps(data, ensure_ascii=False)
 
 
-def test_auto_mode_prefers_local_model_over_templates():
+def _example_copy(name):
+    data = json.loads(json.dumps(LOCAL_DESIGN_EXAMPLE))
+    data["name"] = name
+    return json.dumps(data, ensure_ascii=False)
+
+
+def test_template_is_preferred_over_local_model():
     local = FakeLocalLLM([_drone_like()])
+    design, source = DesignAssistant(local_llm=lambda: local, use_claude=False).design("dron tasarla")
+    assert source == "sablon" and design.name == "Mini dron gövdesi" and local.calls == []
+
+
+def test_auto_mode_uses_local_model_for_objects_without_a_template():
+    local = FakeLocalLLM([_drone_like("Yerel uçak")])
     assistant = DesignAssistant(local_llm=lambda: local, use_claude=False)
-    design, source = assistant.design("dron tasarla")        # "dron" şablonu da var
-    assert source == "yerel LLM" and design.name == "Yerel dron"
+    design, source = assistant.design("uçak tasarla")
+    assert source == "yerel LLM" and design.name == "Yerel uçak"
     call = local.calls[0]
     assert call["model"] == "qwen2.5-coder-7b"              # işe göre model
     assert call["json_schema"] is dsg.DESIGN_SCHEMA and call["timeout"] >= 120
@@ -68,7 +82,7 @@ def test_auto_mode_prefers_local_model_over_templates():
 def test_local_mode_never_calls_claude():
     local = FakeLocalLLM([_drone_like()])
     assistant = DesignAssistant(local_llm=lambda: local, client=ExplodingClaude(), mode="local")
-    assert assistant.design("dron tasarla")[1] == "yerel LLM"
+    assert assistant.design("uçak tasarla")[1] == "yerel LLM"
     assert assistant.ask("duvar kaç mm") == ""             # yanıt listesi bitti → boş, Claude yok
 
 
@@ -79,10 +93,22 @@ def test_invalid_local_json_is_retried_with_error_feedback():
     assert "kullanilamadi" in local.calls[1]["messages"][-1]["content"]
 
 
-def test_local_failure_falls_back_to_template():
+def test_local_failure_without_template_returns_nothing():
     local = FakeLocalLLM(["{}", "{}"])
-    design, source = DesignAssistant(local_llm=lambda: local, mode="local").design("araba tasarla")
-    assert source == "sablon" and design.name == "Model araba"
+    assert DesignAssistant(local_llm=lambda: local, mode="local").design("uçak tasarla") == (None, "")
+    assert len(local.calls) == 2
+
+
+def test_copy_of_the_example_is_retried_then_rejected():
+    # Küçük model "Uçak" adıyla örnekteki kalemliği döndürdü (gerçek LM Studio günlüğündeki "Vida" gibi).
+    local = FakeLocalLLM([_example_copy("Uçak"), _example_copy("Uçak")])
+    assert DesignAssistant(local_llm=lambda: local, mode="local").design("uçak tasarla")[0] is None
+    assert len(local.calls) == 2 and "kopyasi" in local.calls[1]["messages"][-1]["content"]
+
+
+def test_copy_is_accepted_when_a_simple_container_was_asked():
+    local = FakeLocalLLM([_example_copy("Bardak")])
+    assert DesignAssistant(local_llm=lambda: local, mode="local").design("bardak yap")[1] == "yerel LLM"
 
 
 def test_local_timeout_does_not_retry():

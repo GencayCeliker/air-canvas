@@ -33,6 +33,8 @@ class ScriptedLocal:
 def _design_reply(name="Yerel dron"):
     data = json.loads(json.dumps(LOCAL_DESIGN_EXAMPLE))
     data["name"] = name
+    data["parts"][0]["shapes"].append({"kind": "cylinder", "op": "subtract", "size": [3.2, 3.2, 10],
+                                       "pos": [20, 0, 2], "rot": [0, 0, 0], "segments": 0})
     return json.dumps(data, ensure_ascii=False)
 
 
@@ -56,9 +58,9 @@ def _settle(c, timeout=10):
 def test_local_model_asks_for_dimensions_then_designs_with_the_answer():
     local = ScriptedLocal(json.dumps({"question": "Kaç inç pervane kullanacaksın, 3 mü 5 mi?"}), _design_reply())
     c = _canvas(local)
-    c._perform("design_request", "dron tasarla")
+    c._perform("design_request", "uçak tasarla")
     _settle(c)
-    assert c.design is None and c._clarify_request == "dron tasarla"
+    assert c.design is None and c._clarify_request == "uçak tasarla"
     assert "pervane" in c.assistant_tip
 
     actions, _ = c._parse_voice_command("5 inç olsun")

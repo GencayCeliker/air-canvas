@@ -21,7 +21,8 @@ from air_canvas.ai import DesignAssistant  # noqa: E402
 
 @pytest.mark.parametrize("request_text", [
     "M4 vida 20 mm", "somun", "dron tasarla", "dron kolu", "araba", "tekerlek",
-    "120 fan ızgarası", "SSD braketi", "bilgisayar parçası",
+    "120 fan ızgarası", "SSD braketi", "bilgisayar parçası", "kanatları çiz, aynı şekilde 5 inch",
+    "3 inç iki kanatlı pervane", "motor parçası çiz",
 ])
 def test_every_template_builds_watertight_parts(request_text):
     data = dsg.match_template(request_text)
@@ -41,6 +42,16 @@ def test_bolt_template_reads_size_from_speech():
     x, y, z = design.part_size(0)
     assert design.parts[0]["name"].startswith("M4")
     assert z == pytest.approx(0.7 * 4 + 20, abs=0.1)          # baş + gövde
+
+
+def test_propeller_template_reads_inch_and_blade_count():
+    data = dsg.match_template("kanatları çiz, aynı şekilde 5 inch")
+    assert data["name"] == "5 inç 3 kanatlı pervane"
+    verts, _ = dsg.Design(data).meshes[0]
+    radius = np.hypot(verts[:, 0], verts[:, 1]).max()
+    assert 62 < radius <= 63.6                                 # 5 inç = 127 mm çap
+    assert verts[:, 2].min() >= -1e-6                          # eğik kanatlar tablanın altına inmez
+    assert dsg.match_template("7 inç iki kanatlı pervane")["name"] == "7 inç 2 kanatlı pervane"
 
 
 def test_unknown_object_has_no_template():
@@ -207,6 +218,8 @@ def canvas(tmp_path):
     ("bir dron tasarla", "design_request"),
     ("M3 vida çiz", "design_request"),
     ("model araba yap", "design_request"),
+    ("kanatları çiz, aynı şekilde 5 inch.", "design_request"),
+    ("Motor parçası çiz", "design_request"),
     ("bunu stl olarak kaydet", "design_export"),
     ("daire çiz", "stamp"),
     ("kaydet", "save"),

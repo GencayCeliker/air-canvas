@@ -1,13 +1,13 @@
-"""air_canvas.ai — Tasarım asistanı (Claude API → yerel LLM → hazır şablonlar).
+"""air_canvas.ai — Tasarım asistanı (Claude API → hazır şablonlar → yerel LLM).
 
 Claude kullanmak için ``pip install "air-canvas[ai]"`` kurun ve kimlik bilgisi verin:
     ANTHROPIC_API_KEY=...            (veya ``ant auth login`` profili)
     AIR_CANVAS_CLAUDE_MODEL=...      İsteğe bağlı model (varsayılan: claude-opus-5-5)
 
 AIR_CANVAS_AI               Hangi yapay zekâ kullanılsın (``--ai`` ile de seçilir):
-                            ``auto``     Claude → yerel LLM → şablon (varsayılan)
+                            ``auto``     Claude → şablon → yerel LLM (varsayılan)
                             ``claude``   Claude → şablon
-                            ``local``    yerel LLM → şablon; hiçbir veri internete gitmez
+                            ``local``    şablon → yerel LLM; hiçbir veri internete gitmez
                             ``template`` yalnızca yerleşik şablonlar
 AIR_CANVAS_LLM_TIMEOUT      Yerel model hiç veri göndermezse en fazla kaç sn beklensin (varsayılan: 180).
                             Yanıt akış olarak geldiği için çalışan ama yavaş bir model yarıda kesilmez.
@@ -82,11 +82,26 @@ LOCAL_DESIGN_EXAMPLE = {
 
 LOCAL_DESIGN_RULES = """
 Cikti kurallari: YALNIZCA tek bir JSON nesnesi dondur; aciklama, markdown veya kod blogu yazma.
+Asagidaki ornek yalnizca JSON BICIMINI gosterir; sekillerini ve olculerini KOPYALAMA. Istenen nesnenin kendine
+ozgu parcalarini kur (ornegin vida: altigen bas + govde; dron: govde plakasi + kollar + motor delikleri).
 JSON'u girintisiz, satir atlamadan, tek satir halinde (ornekteki gibi sikistirilmis) yaz.
 Alanlar: name, summary, parts (name, purpose, step, print_orientation, shapes, placements), print_tips.
 Her shape: kind (box|cylinder|sphere), op (add|subtract), size [3 sayi], pos [3 sayi], rot [3 sayi], segments (tamsayi).
 Ornek bicim:
 """ + json.dumps(LOCAL_DESIGN_EXAMPLE, ensure_ascii=False, separators=(",", ":"))
+
+# Küçük yerel modeller tek örneği çoğu zaman yalnızca adını değiştirip geri verir ("vida" adlı kalemlik).
+# Tek parça ve en fazla iki şekil, ancak gerçekten basit bir kap istendiyse kabul edilir.
+_SIMPLE_OBJECT_WORDS = ("kalem", "bardak", "kupa", "fincan", "kap", "saksı", "saksi", "vazo", "boru", "tüp", "tup",
+                        "silindir", "kutu", "küp", "kup", "halka", "pul", "disk")
+
+
+def _too_simple(design: "dsg.Design", request: str) -> bool:
+    if len(design.parts) != 1 or len(design.parts[0]["shapes"]) > 2:
+        return False
+    tokens = re.findall(r"\w+", (request or "").replace("İ", "i").replace("I", "ı").lower())
+    return not any(t.startswith(w) for t in tokens for w in _SIMPLE_OBJECT_WORDS)
+
 
 SLOW_TOKENS_PER_SEC = 10.0   # Bunun altında HUD'da "yavaş" uyarısı gösterilir
 
@@ -328,15 +343,20 @@ class DesignAssistant:
                 error = "gecerli bir JSON nesnesi yok"
             else:
                 try:
-                    return dsg.Design(data, source="yerel LLM")
+                    design = dsg.Design(data, source="yerel LLM")
                 except Exception as exc:
                     error = str(exc)
+                else:
+                    if not _too_simple(design, request):
+                        return design
+                    error = ("bu ornekteki kalemligin kopyasi; istenen nesnenin kendi parcalarini ve ayrintilarini "
+                             "(delik, kol, bas, kanat vb.) gercek olculeriyle modelle")
             log.info("[AI] Yerel LLM tasarimi kullanilamadi (deneme %d): %s", attempt + 1, error)
             if not raw:
                 break   # Sunucu cevap vermedi / zaman aşımı: tekrar denemek yalnızca bekletir.
             messages += [
                 {"role": "assistant", "content": raw[:6000]},
-                {"role": "user", "content": f"Bu cikti kullanilamadi ({error}). Ayni tasarimi semaya tam uyan, "
+                {"role": "user", "content": f"Bu cikti kullanilamadi ({error}). Istenen nesneyi semaya tam uyan, "
                                             "en az bir 'add' sekli olan gecerli tek bir JSON nesnesi olarak tekrar yaz."},
             ]
         return None
@@ -346,7 +366,7 @@ class DesignAssistant:
     def design(self, request: str) -> Tuple[Optional["dsg.Design"], str]:
         """İstekten tasarım üretir. Dönüş: (tasarım veya None, kaynak açıklaması).
 
-        Sıra: Claude → yerel LLM → yerleşik şablon (``mode`` ile daraltılır)."""
+        Sıra: Claude → yerleşik şablon → yerel LLM (``mode`` ile daraltılır)."""
         if self.mode in ("auto", "claude"):
             self._status("Claude tasarliyor ...")
             text = self._call_claude(
@@ -364,17 +384,19 @@ class DesignAssistant:
                 except Exception as exc:
                     log.warning("[AI] Claude tasarimi kullanilamadi: %s", exc)
 
+        # Küçük yerel modeller şablonu olan nesnelerde bile kaba kutu/silindir üretiyor (#22):
+        # elle ölçülendirilmiş şablon varsa yerel modele hiç sorulmaz.
+        template = dsg.match_template(request)
+        if template is not None:
+            self.last_source = "sablon"
+            return dsg.Design(template, source="sablon"), "sablon"
+
         llm = self._local()
         if llm is not None:
             design = self._local_design(llm, request)
             if design is not None:
                 self.last_source = "yerel LLM"
                 return design, "yerel LLM"
-
-        template = dsg.match_template(request)
-        if template is not None:
-            self.last_source = "sablon"
-            return dsg.Design(template, source="sablon"), "sablon"
         return None, ""
 
     def clarify(self, request: str) -> str:
@@ -390,8 +412,8 @@ class DesignAssistant:
                                     output_format={"type": "json_schema", "schema": CLARIFY_SCHEMA})
         if raw is None:
             llm = self._local()
-            if llm is None:
-                return ""
+            if llm is None or dsg.match_template(request) is not None:
+                return ""   # Tasarımı şablon yapacak: sorulan ölçü kullanılmaz
             try:
                 raw = self._local_chat(llm, [{"role": "system", "content": CLARIFY_SYSTEM},
                                              {"role": "user", "content": prompt}],

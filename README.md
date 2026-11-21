@@ -77,7 +77,7 @@ air-canvas --help
 
 ## 3D design assistant
 
-Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an object such as *vida*, *somun*, *dron*, *araba*, *tekerlek*, *fan* or *SSD* starts a design.
+Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an object such as *vida*, *somun*, *dron*, *pervane*/*kanat*, *motor*, *araba*, *tekerlek*, *fan* or *SSD* starts a design.
 
 1. The AI splits the object into printable parts (holes, standard sizes, 1.2 mm minimum walls, no steep overhangs) and models each part from boxes, cylinders/cones/hexagons and spheres.
    If a dimension that changes the design is missing, the AI asks first (*"Kaç inç pervane kullanacaksın?"*) and then listens for your answer. Say *"sen karar ver"* to use standard sizes or *"vazgeç"* to cancel. Requests that already contain a number are not questioned.
@@ -85,7 +85,7 @@ Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an
 3. Say *"sonraki"* / *"önceki"* / *"tekrar"* to move through the parts, *"kontrol et"* to have the AI look at your drawing, or ask a question (*"duvar kalınlığı kaç olmalı?"*). *"Taslağı çiz"* (or `T`) inks the outline of the design onto the canvas so you can trace it, save it or undo it.
 4. Say *"STL"* (or press `X`). Each part is written as its own STL, lying flat on the bed, together with an assembly preview, `talimatlar.txt` and `tasarim.json`, in `<save dir>/3D/`.
 
-**Which AI is used?** With the `ai` extra and an Anthropic credential (`ANTHROPIC_API_KEY` or an `ant auth login` profile), Claude (`claude-opus-5-5`, structured JSON output) designs anything you can describe. Without Claude, a local LLM (LM Studio / Ollama) is tried. The built-in templates work offline and are the last fallback: bolt, nut, drone, drone arm, car, wheel, fan grill, SSD bracket. Choose explicitly with `--ai auto|claude|local|template`.
+**Which AI is used?** With the `ai` extra and an Anthropic credential (`ANTHROPIC_API_KEY` or an `ant auth login` profile), Claude (`claude-opus-5-5`, structured JSON output) designs anything you can describe. Without Claude, a matching built-in template is used first, because small local models tend to return rough boxes and cylinders even for a drone or a bolt. Anything without a template goes to a local LLM (LM Studio / Ollama); a one-part, two-shape answer to anything but a simple container is sent back once. The built-in templates work offline: bolt, nut, drone, drone arm, propeller (inch and blade count from speech, e.g. *"5 inç pervane"*), brushless motor mock-up, car, wheel, fan grill, SSD bracket. Choose explicitly with `--ai auto|claude|local|template`.
 
 ### Offline / local model
 
@@ -98,7 +98,7 @@ air-canvas --offline
 2. The Whisper speech model (`small` by default) is downloaded **once** on first use; after that it loads from the local cache without any network request. To prepare a fully offline machine, run once while online or set `AIR_CANVAS_WHISPER_MODEL` to a local model folder. Whisper gets the command words as a hint, which makes short Turkish commands much more reliable.
 3. Spoken feedback uses the Turkish Windows voice (*Microsoft Tolga*), also when it is only installed as a modern (OneCore) voice. If it is missing, add it in **Windows Settings → Time & language → Speech**.
 
-Replies are streamed, and the HUD shows progress (`412 token (46/sn)`). `AIR_CANVAS_LLM_TIMEOUT` (default 180 s) is how long the server may stay **silent**, so a slow but working model is not cut off. With the whole model on the GPU, a 7B model designs in a few seconds. If the HUD says *yavas* (slow), the model is running on the CPU (see Troubleshooting). If the model returns invalid JSON it is asked once more with the error; if it still fails, a matching built-in template is used.
+Replies are streamed, and the HUD shows progress (`412 token (46/sn)`). `AIR_CANVAS_LLM_TIMEOUT` (default 180 s) is how long the server may stay **silent**, so a slow but working model is not cut off. With the whole model on the GPU, a 7B model designs in a few seconds. If the HUD says *yavas* (slow), the model is running on the CPU (see Troubleshooting). If the model returns invalid JSON it is asked once more with the error.
 
 ## Configuration
 
@@ -113,7 +113,7 @@ Replies are streamed, and the HUD shows progress (`412 token (46/sn)`). `AIR_CAN
 | `AIR_CANVAS_LLM_VISION_MODEL` | model for drawing checks (images); default: a model with "vl"/"vision" in its name |
 | `ANTHROPIC_API_KEY` | enables Claude for the 3D design assistant |
 | `AIR_CANVAS_CLAUDE_MODEL` | `claude-opus-5-5` |
-| `AIR_CANVAS_AI` | `auto` (Claude → local LLM → templates), `claude`, `local` or `template` |
+| `AIR_CANVAS_AI` | `auto` (Claude → templates → local LLM), `claude`, `local` or `template` |
 | `AIR_CANVAS_OFFLINE` | `1` = same as `--offline` |
 | `AIR_CANVAS_STT` | `auto` (Google, then Whisper), `google` or `whisper` |
 | `AIR_CANVAS_WHISPER_MODEL` | `small` (or `tiny`/`base`/`medium`, or a local folder) |
@@ -154,7 +154,7 @@ air_canvas/
   llm.py         Optional local LLM client (LM Studio / Ollama): summaries, designs, questions, drawing checks
   textutil.py    Cleans model output for speech (reasoning blocks, markdown, emoji)
   design.py      3D designs: parts, solid modelling (manifold3d), STL export, 3D preview, templates
-  ai.py          Design assistant: Claude, then a local LLM, then built-in templates
+  ai.py          Design assistant: Claude, then built-in templates, then a local LLM
   config.py      Default paths, overridable with environment variables
   __main__.py    Command-line app (air-canvas)
 tests/           pytest suite, synthetic input only
