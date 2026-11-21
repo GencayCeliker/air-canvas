@@ -92,6 +92,7 @@ GUIDE_ALPHA = 0.55
 # Tasarım modu sesli komutları
 QUESTION_WORDS = {"nasıl", "nasil", "neden", "niye", "niçin", "hangi", "kaç", "kac", "nedir", "ne",
                   "mı", "mi", "mu", "mü", "nerede", "nereye"}
+NOTE_MESSAGE = "Sesli notunuz kaydedildi."   # Komut olmayan konuşma not olarak saklanır
 
 PALETTE: List[Tuple[str, Tuple[int, int, int]]] = [
     ("MAVI", (255, 0, 0)),
@@ -457,16 +458,14 @@ class AirCanvas:
             import comtypes.client  # type: ignore
             comtypes.CoInitialize()
             com = comtypes
+            from .speech import find_turkish_voice
             speaker = comtypes.client.CreateObject("SAPI.SpVoice")
-            voices = speaker.GetVoices()
-            for i in range(voices.Count):
-                v = voices.Item(i)
-                desc = str(v.GetDescription()).lower()
-                if "tolga" in desc or "turkish" in desc or "türkçe" in desc or "tr-tr" in desc:
-                    speaker.Voice = v
-                    speaker.Speak(text)
-                    return
-            log.info("[AirCanvas] Türkçe Windows sesi yok; sesli geri bildirim atlandı.")
+            voice = find_turkish_voice(speaker, comtypes.client)
+            if voice is None:
+                log.info("[AirCanvas] Türkçe Windows sesi yok; sesli geri bildirim atlandı.")
+                return
+            speaker.Voice = voice
+            speaker.Speak(text)
         except Exception:
             pass
         finally:
@@ -566,6 +565,9 @@ class AirCanvas:
                 return [("design_overview", None)], ""
             if has("rehber", "kılavuz", "kilavuz"):
                 return [("guide_toggle", None)], ""
+        elif (has("taslak", "taslağ", "taslag")
+              or (has("adım", "adim") and has("sonraki", "sıradaki", "siradaki", "önceki", "onceki"))):
+            return [], "Önce bir tasarım isteyin, örneğin dron tasarla."
         if has("kontrol", "değerlendir", "degerlendir") or "nasıl olmuş" in low or "nasil olmus" in low:
             return [("design_review", None)], "Çizimine bakıyorum."
         if has("stl", "yazdır", "yazdir") or "dışa aktar" in low or "disa aktar" in low or "baskıya" in low:
@@ -614,10 +616,10 @@ class AirCanvas:
         # "kırmızı daire ve mavi kare çiz": her parça kendi rengi, şekli, boyutu ve konumuyla.
         stamps: List[Tuple[int, Dict[str, Any]]] = []
         stamp_colors: List[str] = []
-        for segment in re.split(r"\s*(?:[,;]|\bve\b|\bile\b|\bsonra\b|\bardından\b|\bardindan\b)\s*", low):
-            seg_tokens = re.findall(r"\w+", segment)
-            if not seg_tokens:
-                continue
+        segments = [re.findall(r"\w+", s) for s in
+                    re.split(r"\s*(?:[,;]|\bve\b|\bile\b|\bsonra\b|\bardından\b|\bardindan\b)\s*", low)]
+        segments = self._merge_shape_segments([s for s in segments if s])
+        for seg_tokens in segments:
             color, shape = self._voice_color(seg_tokens), self._voice_shape(seg_tokens)
             color_word = _spoken(PALETTE[color][0]) if color is not None else ""
             if color is not None:
@@ -642,8 +644,35 @@ class AirCanvas:
             # Tasarım açıkken veya soru sorulduğunda konuşma AI'a soru olarak gider.
             if self.design is not None or "?" in text or QUESTION_WORDS.intersection(tokens):
                 return [("ask", text)], "Düşünüyorum..."
-            return [], "Sesli notunuz kaydedildi."
+            return [], NOTE_MESSAGE
         return actions, ". ".join(messages) + "."
+
+    @classmethod
+    def _merge_shape_segments(cls, segments: List[List[str]]) -> List[List[str]]:
+        """Şekilsiz bir parçayı (ör. Whisper'ın virgülüyle ayrılan "Yeşil, üçgen") sonraki şekle bağlar.
+
+        Sonraki parçanın kendi rengi varsa birleştirilmez: "mavi, kırmızı daire" iki ayrı komuttur."""
+        merged: List[List[str]] = []
+        pending: List[str] = []
+        for tokens in segments:
+            tokens = pending + tokens
+            pending = []
+            has_shape = bool(cls._voice_shape(tokens))
+            if not has_shape:
+                pending = tokens
+                continue
+            merged.append(tokens)
+        if pending:
+            merged.append(pending)
+        # Sonraki parçanın kendi rengi varken birleşmiş olanları geri ayır.
+        result: List[List[str]] = []
+        for tokens in merged:
+            colors = [i for i, t in enumerate(tokens) if cls._voice_color([t]) is not None]
+            if len(colors) > 1 and cls._voice_shape(tokens[colors[-1]:]):
+                result += [tokens[:colors[-1]], tokens[colors[-1]:]]
+            else:
+                result.append(tokens)
+        return result
 
     @staticmethod
     def _voice_color(tokens: List[str]) -> Optional[int]:
@@ -749,6 +778,10 @@ class AirCanvas:
                         self.assistant_tip = message
                         if actions[0][0] not in ("ask", "design_request", "design_review", "design_answer"):
                             self._say_async(message)   # Uzun işlerde sonuç ayrıca seslendirilir
+                    return
+                if message and message != NOTE_MESSAGE:   # Eylem yok ama yol gösteren bir cevap var
+                    self.assistant_tip = message
+                    self._say_async(message)
                     return
 
                 summary = self._summarize_speech(spoken_text)

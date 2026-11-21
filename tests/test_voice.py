@@ -166,6 +166,52 @@ def test_whisper_only_engine_never_calls_google(monkeypatch):
 def test_whisper_hallucinations_are_dropped():
     assert filter_hallucination("Altyazı M.K.") == ""
     assert filter_hallucination(" sonraki adım ") == "sonraki adım"
+    # initial_prompt'un sessizlikte geri okunması komut sanılmamalı
+    assert filter_hallucination("Air Canvas sesli komutları: kırmızı, mavi") == ""
+    assert filter_hallucination("kırmızı, mavi, yeşil, sarı, kare, daire") == ""
+    assert filter_hallucination("Yeşil, üçgen ve sarı yıldız çiz.") == "Yeşil, üçgen ve sarı yıldız çiz."
+
+
+def test_whisper_gets_the_command_vocabulary_as_prompt(monkeypatch):
+    from air_canvas import listen as ls
+    seen = {}
+
+    class Seg:
+        text = " Dron tasarla. "
+
+    class Model:
+        def transcribe(self, samples, **kwargs):
+            seen.update(kwargs)
+            return [Seg()], None
+
+    class Audio:
+        def get_raw_data(self, convert_rate, convert_width):
+            return b"\0\0" * 1600
+
+    listener = SpeechListener(engine="whisper")
+    monkeypatch.setattr(listener, "_load_whisper", lambda: Model())
+    assert listener._whisper_text(Audio()) == "Dron tasarla."
+    assert seen["initial_prompt"] == ls.WHISPER_PROMPT and seen["language"] == "tr" and seen["vad_filter"]
+
+
+def test_whisper_commas_do_not_split_color_from_shape():
+    c = ac.AirCanvas(auto_init=False)
+    actions, message = c._parse_voice_command("Yeşil, üçgen ve sarı, yıldız, çiz.")
+    assert [a for a in actions if a[0] == "color"] == [("color", 1), ("color", 3)]
+    assert [a[1]["shape"] for a in actions if a[0] == "stamp"] == ["UCGEN", "YILDIZ"]
+    assert message == "Yeşil üçgen ve sarı yıldız yan yana çizildi."
+    # Sonraki parçanın kendi rengi varsa ayrı komut kalır
+    actions, _ = c._parse_voice_command("mavi, kırmızı daire çiz")
+    assert actions == [("color", 0), ("color", 2), ("stamp", "DAIRE")]
+
+
+@pytest.mark.parametrize("text", ["sonraki adım", "taslağı çiz"])
+def test_design_commands_without_design_explain_instead_of_saving_a_note(text):
+    speaker = SlowSpeaker()
+    c = ac.AirCanvas(auto_init=False, speaker=speaker, listener=FakeListener(text))
+    _listen(c)
+    assert "tasarım isteyin" in c.assistant_tip and not c.voice_notes
+    assert _wait_until(lambda: speaker.said) and "dron tasarla" in speaker.said[0]
 
 
 # ─── Sesli şekiller ──────────────────────────────────────────────────────────

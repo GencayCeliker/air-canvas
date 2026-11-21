@@ -133,20 +133,18 @@ class TurkishSpeaker:
             comtypes.CoInitialize()
             com = comtypes
             sapi = comtypes.client.CreateObject("SAPI.SpVoice")
-            voices = sapi.GetVoices()
-            for i in range(voices.Count):
-                v = voices.Item(i)
-                desc = str(v.GetDescription()).lower()
-                if "tolga" in desc or "turkish" in desc or "türkçe" in desc or "tr-tr" in desc:
-                    sapi.Voice = v
-                    sapi.Speak(text, _SVSF_ASYNC)
-                    # Eşzamansız konuşup iptali yokla: stop() SAPI sesini de keser.
-                    while not sapi.WaitUntilDone(100):
-                        if self._cancel.is_set():
-                            sapi.Speak("", _SVSF_ASYNC | _SVSF_PURGE)
-                            break
-                    return
-            log.info("[AirCanvas] Türkçe ses bulunamadı; sesli geri bildirim atlandı.")
+            voice = find_turkish_voice(sapi, comtypes.client)
+            if voice is None:
+                log.info("[AirCanvas] Türkçe Windows sesi bulunamadı; sesli geri bildirim atlandı. "
+                         "Ayarlar > Saat ve dil > Konuşma bölümünden Türkçe ses ekleyebilirsiniz.")
+                return
+            sapi.Voice = voice
+            sapi.Speak(text, _SVSF_ASYNC)
+            # Eşzamansız konuşup iptali yokla: stop() SAPI sesini de keser.
+            while not sapi.WaitUntilDone(100):
+                if self._cancel.is_set():
+                    sapi.Speak("", _SVSF_ASYNC | _SVSF_PURGE)
+                    break
         except Exception as exc:
             log.debug("[AirCanvas] SAPI kullanılamadı: %s", exc)
         finally:
@@ -155,6 +153,40 @@ class TurkishSpeaker:
                     com.CoUninitialize()
                 except Exception:
                     pass
+
+
+# Windows 10/11'de Türkçe ses (Microsoft Tolga) çoğu zaman yalnızca OneCore kataloğundadır;
+# SAPI'nin GetVoices() listesi bunu göstermez, ama kategori kimliği verilince kullanılabilir.
+_ONECORE_VOICES = r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech_OneCore\Voices"
+_TURKISH_HINTS = ("tolga", "turkish", "türkçe", "turkce", "tr-tr", "trtr")
+
+
+def _is_turkish(description: str) -> bool:
+    desc = description.lower()
+    return any(h in desc for h in _TURKISH_HINTS)
+
+
+def find_turkish_voice(sapi, comtypes_client):
+    """SAPI'de Türkçe bir ses jetonu arar: önce klasik liste, sonra OneCore sesleri. Yoksa None."""
+    try:
+        voices = sapi.GetVoices()
+        for i in range(voices.Count):
+            v = voices.Item(i)
+            if _is_turkish(str(v.GetDescription())):
+                return v
+    except Exception as exc:
+        log.debug("[AirCanvas] SAPI ses listesi okunamadı: %s", exc)
+    try:
+        category = comtypes_client.CreateObject("SAPI.SpObjectTokenCategory")
+        category.SetId(_ONECORE_VOICES, False)
+        tokens = category.EnumerateTokens()
+        for i in range(tokens.Count):
+            token = tokens.Item(i)
+            if _is_turkish(str(token.GetDescription())):
+                return token
+    except Exception as exc:
+        log.debug("[AirCanvas] OneCore sesleri okunamadı: %s", exc)
+    return None
 
 
 def _remove_quiet(path: Optional[str]) -> None:
