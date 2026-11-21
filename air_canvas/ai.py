@@ -117,6 +117,18 @@ Tasarima baslamadan once karar ver: tasarimi BELIRGIN bicimde degistirecek kriti
 - Istek yeterince acik veya makul varsayilanlar yeterliyse question bos string olsun.
 JSON dondur: {"question": "..."}"""
 
+PHOTO_SYSTEM = """Sen Air Canvas'in 3D baski tasarim asistanisin. Kullanici, tasarlamak istedigi nesnenin referans
+fotograflarini verdi (birden cok fotograf tek resimde yan yana olabilir). Tasarimci icin yapiyi Turkce ozetle:
+nesnenin tipi, ana parcalar ve adetleri, parcalarin birbirine gore yerlesimi, gorunen vida/delik/baglanti noktalari.
+Milimetre veya inc TAHMIN ETME; olculer kullanicinin notlarindan gelecek. En fazla 6 kisa cumle, markdown kullanma."""
+
+
+def _with_context(request: str, context: str) -> str:
+    """Sesli isteğe proje bağlamını (ölçüler, fotoğraf özeti) ekler."""
+    text = f"Kullanicinin sesli istegi: \"{request}\""
+    return f"{text}\n\n{context}" if context else text
+
+
 CLARIFY_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {"question": {"type": "string"}},
@@ -321,11 +333,11 @@ class DesignAssistant:
         return strip_reasoning(llm.generate(convo, system=system, temperature=kwargs.get("temperature", 0.3),
                                             max_tokens=kwargs.get("max_tokens", 400)) or "")
 
-    def _local_design(self, llm, request: str) -> Optional["dsg.Design"]:
+    def _local_design(self, llm, request: str, context: str = "") -> Optional["dsg.Design"]:
         """Yerel modelden JSON tasarım ister; geçersizse hatayı söyleyip bir kez daha dener."""
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": DESIGN_SYSTEM + "\n" + LOCAL_DESIGN_RULES},
-            {"role": "user", "content": f"Kullanicinin sesli istegi: \"{request}\"\n"
+            {"role": "user", "content": _with_context(request, context) + "\n"
                                         "Bunu 3D baskiya uygun parcalar halinde tasarla ve JSON dondur."},
         ]
         for attempt in range(2):
@@ -363,7 +375,8 @@ class DesignAssistant:
 
     # ─── Genel API ────────────────────────────────────────────────────────────
 
-    def design(self, request: str) -> Tuple[Optional["dsg.Design"], str]:
+    def design(self, request: str, context: str = "",
+               params: Optional[Dict[str, Any]] = None) -> Tuple[Optional["dsg.Design"], str]:
         """İstekten tasarım üretir. Dönüş: (tasarım veya None, kaynak açıklaması).
 
         Sıra: Claude → yerleşik şablon → yerel LLM (``mode`` ile daraltılır)."""
@@ -371,7 +384,7 @@ class DesignAssistant:
             self._status("Claude tasarliyor ...")
             text = self._call_claude(
                 system=DESIGN_SYSTEM,
-                content=f"Kullanicinin sesli istegi: \"{request}\"\nBunu 3D baskiya uygun parcalar halinde tasarla.",
+                content=_with_context(request, context) + "\nBunu 3D baskiya uygun parcalar halinde tasarla.",
                 effort="medium",
                 max_tokens=16000,
                 output_format={"type": "json_schema", "schema": dsg.DESIGN_SCHEMA},
@@ -386,14 +399,14 @@ class DesignAssistant:
 
         # Küçük yerel modeller şablonu olan nesnelerde bile kaba kutu/silindir üretiyor (#22):
         # elle ölçülendirilmiş şablon varsa yerel modele hiç sorulmaz.
-        template = dsg.match_template(request)
+        template = dsg.match_template(request, params)
         if template is not None:
             self.last_source = "sablon"
             return dsg.Design(template, source="sablon"), "sablon"
 
         llm = self._local()
         if llm is not None:
-            design = self._local_design(llm, request)
+            design = self._local_design(llm, request, context)
             if design is not None:
                 self.last_source = "yerel LLM"
                 return design, "yerel LLM"
@@ -443,6 +456,28 @@ class DesignAssistant:
                     return answer
             except Exception as exc:
                 log.debug("[AI] Yerel LLM yaniti alinamadi: %s", exc)
+        return ""
+
+    def describe_photos(self, png_bytes: bytes) -> str:
+        """Proje fotoğraflarındaki nesnenin yapısını özetler (Claude → yerel görsel model)."""
+        instruction = "Bu referans fotograflardaki nesnenin yapisini tasarim icin ozetle."
+        if self.mode in ("auto", "claude"):
+            content = [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                              "data": base64.standard_b64encode(png_bytes).decode("ascii")}},
+                {"type": "text", "text": instruction},
+            ]
+            answer = self._call_claude(system=PHOTO_SYSTEM, content=content, effort="low", max_tokens=1500)
+            if answer:
+                return answer.strip()[:800]
+        llm = self._local()
+        if llm is not None and hasattr(llm, "image_message"):
+            try:
+                return self._local_chat(llm, [{"role": "system", "content": PHOTO_SYSTEM},
+                                              llm.image_message(instruction, png_bytes)],
+                                        "vision", temperature=0.2, max_tokens=500, timeout=180).strip()[:800]
+            except Exception as exc:
+                log.debug("[AI] Yerel gorsel model fotograflari okuyamadi: %s", exc)
         return ""
 
     def review(self, png_bytes: bytes, design: Optional["dsg.Design"] = None, step: int = -1) -> str:

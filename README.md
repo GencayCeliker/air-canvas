@@ -89,6 +89,21 @@ Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an
 
 **Which AI is used?** With the `ai` extra and an Anthropic credential (`ANTHROPIC_API_KEY` or an `ant auth login` profile), Claude (`claude-opus-5-5`, structured JSON output) designs anything you can describe. Without Claude, a matching built-in template is used first, because small local models tend to return rough boxes and cylinders even for a drone or a bolt. Anything without a template goes to a local LLM (LM Studio / Ollama); a one-part, two-shape answer to anything but a simple container is sent back once. The built-in templates work offline: bolt, nut, drone, drone arm, propeller (inch and blade count from speech, e.g. *"5 inç pervane"*), brushless motor mock-up, car, wheel, fan grill, SSD bracket. Choose explicitly with `--ai auto|claude|local|template`.
 
+### Project folder
+
+Say *"dron projesini aç"* (or start with `--project dron`) to work on one object with your own references. The folder `<save dir>/projeler/dron/` is created on first use:
+
+```
+bilgi.txt     sizes and notes, e.g. "pervane: 7 inç", "motor: 2207", "kol: 150 mm", "fc: 20 mm", "vida: M3x12"
+foto/         reference photos
+referans/     ready-made STL parts
+```
+
+- `key: value` lines feed the built-in templates (propeller size and blades, arm length, motor and flight-controller hole spacing, bolt size) when you do not say a number. All notes go to Claude or the local model as context, and no size question is asked.
+- Photos are shown to a vision model (Claude, or a local VL model) once. It describes the structure (type, parts, layout) for the designer; sizes always come from `bilgi.txt`, because millimetres cannot be read reliably from a photo.
+- Each watertight STL in `referans/` becomes a part. It appears in the 3D guide, sits next to the generated design in the assembly and is exported with it. Open meshes and very large files (over 80 000 triangles) are skipped with a message. Check the licence of downloaded models; game assets are usually not watertight and have no real sizes, so use them only as visual references.
+- Say *"projeyi kapat"* to close it.
+
 ### Offline / local model
 
 ```bash
@@ -156,6 +171,7 @@ air_canvas/
   llm.py         Optional local LLM client (LM Studio / Ollama): summaries, designs, questions, drawing checks
   textutil.py    Cleans model output for speech (reasoning blocks, markdown, emoji)
   design.py      3D designs: parts, solid modelling (manifold3d), STL export, 3D preview, templates
+  project.py     Project folders: bilgi.txt sizes, reference photos, reference STL parts
   ai.py          Design assistant: Claude, then built-in templates, then a local LLM
   config.py      Default paths, overridable with environment variables
   __main__.py    Command-line app (air-canvas)

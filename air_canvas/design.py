@@ -297,6 +297,36 @@ class Design:
         if all(len(t) == 0 for _, t in self.meshes):
             raise ValueError("Hiçbir parça üretilemedi.")
 
+    @classmethod
+    def from_meshes(cls, name: str, summary: str, meshes: List[Tuple[str, np.ndarray, np.ndarray]],
+                    source: str = "proje") -> "Design":
+        """Yalnızca hazır ağlardan (referans STL) oluşan tasarım."""
+        design = cls.__new__(cls)
+        design.data = {"name": name, "summary": summary, "parts": [], "print_tips": []}
+        design.source = source
+        design.name, design.summary = name, summary
+        design.parts, design.print_tips = [], []
+        design.meshes, design.failed_parts = [], []
+        design.add_reference_parts(meshes)
+        return design
+
+    def add_reference_parts(self, meshes: List[Tuple[str, np.ndarray, np.ndarray]]) -> None:
+        """Hazır ağları ayrı parçalar olarak ekler; montajda mevcut parçaların sağına dizilir."""
+        placed = self.placed_meshes()
+        cursor = max((float(v[:, 0].max()) for _, v, _ in placed), default=0.0) + 10.0 if placed else 0.0
+        for label, verts, tris in meshes:
+            mins, maxs = verts.min(axis=0), verts.max(axis=0)
+            local = verts - np.array([mins[0], (mins[1] + maxs[1]) / 2, mins[2]])
+            self.parts.append({
+                "name": label[:60], "purpose": "Projedeki hazır parça (referans STL).",
+                "step": "Bu parça proje klasöründeki STL dosyasından geldi; olduğu gibi basılabilir.",
+                "print_orientation": "", "shapes": [], "reference": True,
+                "placements": [{"pos": [cursor, 0.0, 0.0], "rot": [0.0, 0.0, 0.0]}],
+            })
+            self.meshes.append((local, tris))
+            self.data.setdefault("references", []).append(label)
+            cursor += float(maxs[0] - mins[0]) + 10.0
+
     def quantity(self, index: int) -> int:
         return len(self.parts[index]["placements"])
 
@@ -587,43 +617,69 @@ def _motor_holes(cx: float, z: float, spacing: float, d: float = 3.2) -> List[Di
             for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r))]
 
 
-def _arm_shapes(length: float = 110.0) -> List[Dict[str, Any]]:
+def _clamp(value: Optional[float], default: float, lo: float, hi: float) -> float:
+    try:
+        return default if value is None else max(lo, min(hi, float(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _pad_d(motor_spacing: float) -> float:
+    return max(28.0, motor_spacing + 10.0)
+
+
+def _arm_shapes(length: float = 110.0, motor_spacing: float = 16.0) -> List[Dict[str, Any]]:
     t = 6.0
+    pad = _pad_d(motor_spacing)
     return [
         _s("box", (length, 14, t), (length / 2, 0, t / 2)),
-        _s("cylinder", (28, 28, t), (length, 0, t / 2)),
+        _s("cylinder", (pad, pad, t), (length, 0, t / 2)),
         _s("cylinder", (8, 8, t * 3), (length, 0, t / 2), op="subtract"),
-        *_motor_holes(length, t, 16.0),
+        *_motor_holes(length, t, motor_spacing),
         _s("cylinder", (3.2, 3.2, t * 3), (8, 0, t / 2), op="subtract"),
         _s("cylinder", (3.2, 3.2, t * 3), (22, 0, t / 2), op="subtract"),
     ]
 
 
-_ARM_STEP = ("110 milimetre uzunluğunda, 14 milimetre genişliğinde dikdörtgen kolu çiz. "
-             "Ucuna 28 milimetre çapında motor tablasını ekle; ortasına 8 milimetre mil deliği, "
-             "etrafına 16 milimetre aralıklı dört M3 delik aç. Kök tarafına gövdeye bağlanan iki M3 delik ekle.")
+def _arm_step(length: float = 110.0, motor_spacing: float = 16.0) -> str:
+    return (f"{length:g} milimetre uzunluğunda, 14 milimetre genişliğinde dikdörtgen kolu çiz. "
+            f"Ucuna {_pad_d(motor_spacing):g} milimetre çapında motor tablasını ekle; ortasına 8 milimetre mil deliği, "
+            f"etrafına {motor_spacing:g} milimetre aralıklı dört M3 delik aç. Kök tarafına gövdeye bağlanan iki M3 delik ekle.")
 
 
-def template_drone_arm() -> Dict[str, Any]:
+_ARM_STEP = _arm_step()
+
+
+def template_drone_arm(arm_length: Optional[float] = None, motor_spacing: Optional[float] = None,
+                       prop_inch: Optional[float] = None) -> Dict[str, Any]:
+    length = _clamp(arm_length, 110.0, 40.0, 250.0)
+    spacing = _clamp(motor_spacing, 16.0, 6.0, 30.0)
+    inch = _clamp(prop_inch, 5.0, 2.0, 10.0)
     return {
         "name": "Dron kolu",
-        "summary": "5 inç pervaneli dron için 110 milimetre kol; ucunda 2204-2306 motor yuvası, 16 milimetre delik aralığı.",
+        "summary": (f"{inch:g} inç pervaneli dron için {length:g} milimetre kol; ucunda motor yuvası, "
+                    f"{spacing:g} milimetre delik aralığı."),
         "parts": [{
             "name": "Kol",
             "purpose": "Motoru gövdeye bağlar.",
-            "step": _ARM_STEP,
+            "step": _arm_step(length, spacing),
             "print_orientation": "Düz yatar, delikler dik. PETG veya karbon katkılı naylon, yüzde 40 doluluk, 4 çevre duvarı.",
-            "shapes": _arm_shapes(),
+            "shapes": _arm_shapes(length, spacing),
             "placements": _one(),
         }],
         "print_tips": ["Kollar titreşim alır: PLA yerine PETG veya naylon kullanın.", "4 çevre duvarı ve yüzde 40 gyroid doluluk."],
     }
 
 
-def template_drone() -> Dict[str, Any]:
+def template_drone(arm_length: Optional[float] = None, motor_spacing: Optional[float] = None,
+                   fc_spacing: Optional[float] = None, prop_inch: Optional[float] = None) -> Dict[str, Any]:
     plate = 70.0
+    length = _clamp(arm_length, 110.0, 40.0, 250.0)
+    spacing = _clamp(motor_spacing, 16.0, 6.0, 30.0)
+    fc = _clamp(fc_spacing, 30.5, 15.0, 45.0)
+    inch = _clamp(prop_inch, 5.0, 2.0, 10.0)
     holes = [_s("cylinder", (3.2, 3.2, 10), (x, y, 1.5), op="subtract")
-             for x in (-15.25, 15.25) for y in (-15.25, 15.25)]
+             for x in (-fc / 2, fc / 2) for y in (-fc / 2, fc / 2)]
     # Kol kökü delikleri: kollar köşegenlere, merkezden (plate/2 - 12) mm uzağa yerleşir.
     arm_root = [_s("cylinder", (3.2, 3.2, 10), (r * math.cos(math.radians(a)), r * math.sin(math.radians(a)), 1.5),
                    op="subtract")
@@ -632,13 +688,13 @@ def template_drone() -> Dict[str, Any]:
              "rot": [0, 0, a]} for a in (45, 135, 225, 315)]
     return {
         "name": "Mini dron gövdesi",
-        "summary": ("5 inç pervaneli, X tipi dört kollu dron çerçevesi. Uçuş kontrolcüsü yuvalı alt plaka, "
+        "summary": (f"{inch:g} inç pervaneli, X tipi dört kollu dron çerçevesi. Uçuş kontrolcüsü yuvalı alt plaka, "
                     "dört kol, üst kapak ve dört ayaktan oluşuyor."),
         "parts": [
             {
                 "name": "Alt plaka",
                 "purpose": "Kolları ve uçuş kontrolcüsünü taşır.",
-                "step": ("Önce 70 milimetrelik kare alt plakayı çiz, kalınlığı 3 milimetre. Ortasına 30.5 milimetre "
+                "step": (f"Önce 70 milimetrelik kare alt plakayı çiz, kalınlığı 3 milimetre. Ortasına {fc:g} milimetre "
                          "aralıklı dört M3 delik aç; bunlar uçuş kontrolcüsü için. Köşegenlere kollar için ikişer delik ekle."),
                 "print_orientation": "Düz, tablaya yatık. PETG, yüzde 50 doluluk.",
                 "shapes": [_s("box", (plate, plate, 3), (0, 0, 1.5)), *holes] + [
@@ -648,9 +704,9 @@ def template_drone() -> Dict[str, Any]:
             {
                 "name": "Kol",
                 "purpose": "Motorları taşır.",
-                "step": _ARM_STEP + " Bundan dört tane basacağız, köşegenlere yerleşecek.",
+                "step": _arm_step(length, spacing) + " Bundan dört tane basacağız, köşegenlere yerleşecek.",
                 "print_orientation": "Düz yatar. PETG veya naylon, 4 çevre duvarı.",
-                "shapes": _arm_shapes(),
+                "shapes": _arm_shapes(length, spacing),
                 "placements": arms,
             },
             {
@@ -893,7 +949,7 @@ def template_propeller(inch: float = 5.0, blades: int = 3) -> Dict[str, Any]:
     }
 
 
-def template_motor() -> Dict[str, Any]:
+def template_motor(motor_spacing: Optional[float] = None) -> Dict[str, Any]:
     # 2207 sınıfı fırçasız motor; tabandaki 16 mm delik aralığı dron kolu şablonuna uyar.
     base_h, bell_d, bell_h = 3.0, 28.0, 13.0
     top = base_h + bell_h
@@ -907,7 +963,7 @@ def template_motor() -> Dict[str, Any]:
                                              base_h + bell_h / 2), op="subtract", rot=(0, 0, a)))
     shapes += [
         _s("cylinder", (5, 5, 12), (0, 0, top + 6)),   # M5 mil
-        *_motor_holes(0, base_h, 16.0),
+        *_motor_holes(0, base_h, _clamp(motor_spacing, 16.0, 6.0, 22.0)),
     ]
     return {
         "name": "2207 fırçasız motor maketi",
@@ -938,30 +994,37 @@ def _num_after(text: str, pattern: str) -> Optional[float]:
         return None
 
 
-def match_template(text: str) -> Optional[Dict[str, Any]]:
-    """Konuşmadaki nesneye uyan hazır şablonu döndürür (yoksa ``None``)."""
+def match_template(text: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Konuşmadaki nesneye uyan hazır şablonu döndürür (yoksa ``None``).
+
+    params: proje klasöründeki ``bilgi.txt`` ölçüleri (bkz. ``project.parse_params``); konuşmada
+    sayı söylenmediyse bunlar kullanılır."""
+    params = params or {}
     low = (text or "").replace("İ", "i").replace("I", "ı").lower()
     tokens = re.findall(r"\w+", low)
 
     def has(*kw):
         return any(t.startswith(k) for t in tokens for k in kw)
 
-    m = _num_after(low, r"\bm\s?(\d+(?:[.,]5)?)\b") or 3
+    m = _num_after(low, r"\bm\s?(\d+(?:[.,]5)?)\b") or params.get("bolt_m") or 3
     if has("somun"):
         return template_nut(m)
     if has("vida", "cıvata", "civata", "bulon"):
-        length = _num_after(low, r"(\d+(?:[.,]\d)?)\s*(?:mm|milim)") or 12
+        length = _num_after(low, r"(\d+(?:[.,]\d)?)\s*(?:mm|milim)") or params.get("bolt_length") or 12
         if length == m:
             length = 12
         return template_bolt(m, max(4.0, min(80.0, length)))
     if has("pervane", "kanat", "prop"):   # "dronun kanatları" dron değil pervane ister
-        inch = _num_after(low, r"(\d+(?:[.,]\d+)?)\s*(?:inç|inc|inch|in\b|\")") or 5
-        blades = 2 if re.search(r"\b(2|iki|çift|cift)\s*kanat", low) else 3
+        inch = _num_after(low, r"(\d+(?:[.,]\d+)?)\s*(?:inç|inc|inch|in\b|\")") or params.get("prop_inch") or 5
+        blades = 2 if re.search(r"\b(2|iki|çift|cift)\s*kanat", low) else int(params.get("blades") or 3)
         return template_propeller(inch, blades)
     if has("motor"):
-        return template_motor()
-    if has("dron","drone", "drön", "quadcopter", "kuadkopter", "multikopter"):
-        return template_drone_arm() if has("kol") else template_drone()
+        return template_motor(params.get("motor_spacing"))
+    if has("dron", "drone", "drön", "quadcopter", "kuadkopter", "multikopter"):
+        inch = _num_after(low, r"(\d+(?:[.,]\d+)?)\s*(?:inç|inc|inch|in\b|\")") or params.get("prop_inch")
+        if has("kol"):
+            return template_drone_arm(params.get("arm_length"), params.get("motor_spacing"), inch)
+        return template_drone(params.get("arm_length"), params.get("motor_spacing"), params.get("fc_spacing"), inch)
     if has("teker", "jant", "lastik"):
         return template_wheel()
     if has("araba", "araç", "arac", "otomobil"):

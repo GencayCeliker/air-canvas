@@ -27,6 +27,8 @@ def main(argv=None) -> int:
     parser.add_argument("--windowed", action="store_true", help="start in a window instead of fullscreen (toggle: F)")
     parser.add_argument("--design", metavar="TEXT",
                         help="start with a 3D design request, e.g. --design \"dron kolu\"")
+    parser.add_argument("--project", metavar="NAME",
+                        help="open a project folder (<save dir>/projeler/NAME: bilgi.txt, foto/, referans/*.stl)")
     parser.add_argument("--ai", choices=["auto", "claude", "local", "template"],
                         help="which AI designs: auto (Claude -> local LLM -> templates), claude, local "
                              "(LM Studio / Ollama, nothing leaves the computer) or template")
@@ -53,6 +55,8 @@ def main(argv=None) -> int:
     if not canvas.available:
         print(canvas._unavailable_message(), file=sys.stderr)
         return 1
+    if args.project:
+        canvas.queue_project(args.project)
     if args.design:
         canvas.queue_design(args.design)
 

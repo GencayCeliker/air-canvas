@@ -278,6 +278,10 @@ class AirCanvas:
         self.inspect_yaw, self.inspect_pitch, self.inspect_zoom = 45.0, 30.0, 1.0
         self._inspect_drag: Optional[Tuple[int, int]] = None   # Sürüklemenin son noktası (fare veya parmak)
         self._inspect_cache: Optional[Tuple[Any, np.ndarray]] = None
+        # Proje klasörü (#24): ölçüler, fotoğraflar ve hazır STL parçalar tasarıma eklenir.
+        self.project = None                # project.Project
+        self._pending_project = ""
+        self._project_busy = False         # Proje yüklenirken gelen tasarım isteği onu bekler
 
         # Çevrimdışı mod: yerel LLM + Whisper + yerel ses; Claude, Google ve Edge TTS kullanılmaz.
         if offline is None:
@@ -305,6 +309,10 @@ class AirCanvas:
     def stop(self) -> None:
         """Açık çizim penceresini kapatır (uygulama kapanışında çağrılabilir)."""
         self._stop_event.set()
+
+    def queue_project(self, name: str) -> None:
+        """Çizim penceresi açılınca yüklenecek proje klasörünü bırakır."""
+        self._pending_project = (name or "").strip()
 
     def queue_design(self, request: str) -> None:
         """Çizim penceresi açılınca hazırlanacak bir 3D tasarım isteği bırakır."""
@@ -558,6 +566,18 @@ class AirCanvas:
             if has("vazgeç", "vazgec", "boşver", "bosver", "iptal"):
                 return [("design_cancel", None)], "Tamam, tasarımdan vazgeçtim."
             return [("design_answer", text)], "Teşekkürler, tasarlıyorum."
+
+        # ── Proje klasörü: "dron projesini aç", "projeyi kapat" ──
+        if any(t.startswith("proje") for t in tokens):
+            if has("kapat", "bitir", "çık", "cik"):
+                return [("project_close", None)], ""
+            if has("aç", "ac", "yükle", "yukle", "başla", "basla", "oluştur", "olustur"):
+                skip = ("proje", "aç", "ac", "yükle", "yukle", "başla", "basla", "oluştur", "olustur", "bir", "yeni",
+                        "lütfen", "lutfen")
+                name = " ".join(t for t in tokens if not t.startswith(skip))
+                if not name:
+                    return [], "Proje adini da soyleyin, ornegin 'dron projesini ac'."
+                return [("project_open", name)], ""
 
         # ── İnceleme modu ("incele" ≠ fırçayı "incelt") ──
         if any(t.startswith("incele") for t in tokens):
@@ -898,6 +918,17 @@ class AirCanvas:
             self._guide = None
             self.inspecting = False
             self.assistant_tip = "Tasarim kapatildi."
+        elif action == "project_open":
+            self._open_project(str(value))
+        elif action == "project_loaded":
+            self._on_project_loaded(value)
+        elif action == "project_photos":
+            if self.project is not None and value:
+                self.project.photo_summary = str(value)
+                self.assistant_tip = "Fotograflar incelendi: " + self._tr_ascii(str(value))[:80]
+        elif action == "project_close":
+            self.project = None
+            self.assistant_tip = "Proje kapatildi."
         elif action == "inspect_toggle":
             self._set_inspect(not self.inspecting)
         elif action == "inspect_set":
@@ -986,13 +1017,23 @@ class AirCanvas:
             design, source = None, ""
             try:
                 assistant = self._get_assistant()
+                waited = 0.0
+                while self._project_busy and waited < 15.0:
+                    time.sleep(0.1)
+                    waited += 0.1
+                project = self.project
                 clarify = getattr(assistant, "clarify", None)
-                if not clarified and callable(clarify):
+                # Projede ölçü notu varsa ölçü sorulmaz: cevap zaten bilgi.txt'de.
+                if not clarified and callable(clarify) and not (project and project.info):
                     question = clarify(request)
                     if question:
                         self._actions.put(("design_clarify", (request, question)))
                         return
-                design, source = assistant.design(request)
+                if project is not None:
+                    design, source = assistant.design(request, context=project.context_text(),
+                                                      params=project.params)
+                else:
+                    design, source = assistant.design(request)
             except Exception as exc:
                 log.error("[AirCanvas] Tasarım üretilemedi: %s", exc)
             finally:
@@ -1070,6 +1111,8 @@ class AirCanvas:
             self.assistant_tip = msg
             self._say_async(msg, wait=True)
             return
+        if self.project is not None and self.project.references:
+            design.add_reference_parts(self.project.references)
         self.design = design
         self.design_step = 0
         self.show_guide = True
@@ -1077,6 +1120,58 @@ class AirCanvas:
         failed = f" Üretilemeyen parça: {', '.join(design.failed_parts)}." if design.failed_parts else ""
         self.assistant_tip = f"Tasarim hazir ({source}): {design.name}. 'Sonraki' ile ilerleyin, 'STL' ile kaydedin."
         self._say_async(f"{design.name} hazır. {design.summary}{failed} {design.spoken_step(0)}", wait=True)
+
+    # ─── Proje klasörü ────────────────────────────────────────────────────────
+
+    def _open_project(self, name: str) -> None:
+        """Klasörü arka planda yükler; fotoğraf varsa ardından görsel modele özetletir."""
+        self.assistant_tip = f"Proje aciliyor: {self._tr_ascii(name)} ..."
+        self._project_busy = True
+
+        def _worker():
+            from .project import open_project, photo_mosaic
+            try:
+                project = open_project(self.save_dir, name)
+            except OSError as exc:
+                log.error("[AirCanvas] Proje açılamadı: %s", exc)
+                self._actions.put(("project_loaded", None))
+                return
+            self._actions.put(("project_loaded", project))
+            if not project.photos:
+                return
+            try:
+                png = photo_mosaic(project.photos)
+                summary = self._get_assistant().describe_photos(png) if png else ""
+            except Exception as exc:
+                log.warning("[AirCanvas] Proje fotoğrafları incelenemedi: %s", exc)
+                summary = ""
+            self._actions.put(("project_photos", summary))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_project_loaded(self, project) -> None:
+        self._project_busy = False
+        if project is None:
+            self.assistant_tip = "Proje klasoru acilamadi."
+            return
+        self.project = project
+        if project.references and self.design is None:
+            from .design import Design
+            self.design = Design.from_meshes(f"{project.name} referanslari",
+                                             "Proje klasöründeki hazır parçalar.", project.references)
+            self.design_step = -1
+            self.show_guide = True
+            self._refresh_guide()
+        parts = [f"{len(project.params)} ölçü", f"{len(project.photos)} fotoğraf", f"{len(project.references)} hazır parça"]
+        msg = f"{project.name} projesi açıldı: {', '.join(parts)}."
+        if project.skipped:
+            msg += f" {len(project.skipped)} dosya atlandı: {project.skipped[0]}."
+        if not (project.info or project.photos or project.references):
+            msg += " Klasör boş; bilgi.txt'ye ölçüleri, foto klasörüne fotoğrafları yazın."
+        elif project.photos:
+            msg += " Fotoğraflara bakıyorum."
+        self.assistant_tip = self._tr_ascii(msg) + f"  ({project.folder})"
+        self._say_async(msg)
 
     def _set_inspect(self, on: bool) -> None:
         if on and self.design is None:
@@ -1844,6 +1939,8 @@ class AirCanvas:
         # Sağ üst durum çipi (her zaman görünür)
         tool = "SILGI" if self.eraser else PALETTE[self.color_index][0]
         mode = " | CEVRIMDISI" if self.offline else (" | AI: YEREL" if self.ai_mode == "local" else "")
+        if self.project is not None:
+            mode += f" | PROJE: {self._tr_ascii(self.project.name)[:16]}"
         status = (f"{tool} | {self._current_thickness()}px | {'TAHTA' if self.board_mode else 'KAMERA'}"
                   f"{mode} | {fps:4.1f} FPS")
         (tw, th), _ = cv2.getTextSize(status, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
@@ -2070,6 +2167,9 @@ class AirCanvas:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_H)
         self._reset_session()
+        if self._pending_project:
+            self._actions.put(("project_open", self._pending_project))
+            self._pending_project = ""
         if self._pending_design:
             self._actions.put(("design_request", self._pending_design))
             self._pending_design = ""
