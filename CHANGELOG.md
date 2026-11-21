@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format follows [Kee
 - Local-model designs use the per-task model, a JSON schema, an example and a retry with the error message; drawing checks fall back to a local vision model (#18).
 - Voice shapes: rectangle, ellipse, hexagon, star and line; size (*büyük*, *küçük*) and position (*sola*, *sağ üste* …); several shapes in one sentence, each in its own color (#17).
 - Long AI answers are shown in a wrapped box above the help panel.
+- Local model replies are streamed. The HUD shows tokens and speed and warns when the model is slow (running on the CPU). `AIR_CANVAS_LLM_TIMEOUT` is now the time the server may stay silent, default 180 s (#20).
+- Whisper gets the command words as a hint. With the `small` model, exact recognition of 20 short commands went from 9 to 14, and most remaining differences are only punctuation (#21).
 
 ### Fixed
 - Queued spoken replies (design summary, steps, AI answers) were dropped when they arrived while the assistant was speaking (#14).
@@ -26,6 +28,13 @@ All notable changes to this project are documented here. The format follows [Kee
 - Questions and drawing checks sent while the AI was busy were silently dropped (#16).
 - *"Dikdörtgen"* drew a square (#17).
 - The design order did not match the docs (templates came before the local LLM) and local designs timed out after 20 s (#18).
+- Local designs were very slow: chat requests used the first model in the list (a VL model), so two 7B models were loaded and GPU memory overflowed. The model then ran on the CPU at 6 tokens/s and *"dron tasarla"* timed out after 300 s. Model choice now prefers models that are already loaded, and chat no longer pulls in a second model; the same design takes about 5 s (#20).
+- Offline mode had no voice when the Turkish Windows voice (*Microsoft Tolga*) was only installed as a OneCore voice (#21).
+- `--offline` still contacted huggingface.co on every start; Whisper now loads from the local cache first (#21).
+- A comma from Whisper (*"Yeşil, üçgen …"*) split the color from its shape. *"sonraki adım"* or *"taslağı çiz"* without an open design was saved as a voice note instead of explaining what to do (#21).
+- Without `ANTHROPIC_API_KEY`, `auto` mode crashed the design instead of falling back to the local LLM or templates, because the SDK raises `TypeError` (#19).
+- `-v` flooded the log with comtypes/matplotlib debug lines; it now enables debug logs for Air Canvas only (#19).
+- `pyproject.toml` uses an SPDX license string (setuptools deprecation warning); the README explains the `click` conflict between gTTS and newer huggingface-hub (#19).
 - OpenCV 5 compatibility (mouse wheel), mediapipe API access and type-narrowing fixes (#3–#10).
 - Running `air_canvas/__main__.py` directly no longer fails with a relative-import error.
 - Questions such as *"duvar kalınlığı kaç olmalı?"* are no longer mistaken for the *kalın* brush command.

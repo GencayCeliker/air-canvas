@@ -94,11 +94,11 @@ pip install -e ".[voice,offline]"
 air-canvas --offline
 ```
 
-1. Start LM Studio (`:1234`) or Ollama (`:11434`) and load a model. A *coder* model (e.g. `qwen2.5-coder` 7B/14B) is picked for designs and a *VL* model (e.g. `qwen2.5-vl`) for `kontrol et`; override with `AIR_CANVAS_LLM_DESIGN_MODEL` / `AIR_CANVAS_LLM_VISION_MODEL`.
-2. The Whisper speech model (`small` by default) is downloaded **once** on first use; after that no internet is needed. To prepare a fully offline machine, run once while online or set `AIR_CANVAS_WHISPER_MODEL` to a local model folder.
-3. For spoken feedback, add the Turkish voice in **Windows Settings → Time & language → Speech**.
+1. Start LM Studio (`:1234`) or Ollama (`:11434`) and load a model. A *coder* model (e.g. `qwen2.5-coder` 7B/14B) is picked for designs and a *VL* model (e.g. `qwen2.5-vl`) for `kontrol et`; override with `AIR_CANVAS_LLM_DESIGN_MODEL` / `AIR_CANVAS_LLM_VISION_MODEL`. Questions and summaries reuse a model that is already loaded, so a second model is not pulled into GPU memory.
+2. The Whisper speech model (`small` by default) is downloaded **once** on first use; after that it loads from the local cache without any network request. To prepare a fully offline machine, run once while online or set `AIR_CANVAS_WHISPER_MODEL` to a local model folder. Whisper gets the command words as a hint, which makes short Turkish commands much more reliable.
+3. Spoken feedback uses the Turkish Windows voice (*Microsoft Tolga*), also when it is only installed as a modern (OneCore) voice. If it is missing, add it in **Windows Settings → Time & language → Speech**.
 
-Local models are slower than Claude: a design can take a few minutes on a CPU (`AIR_CANVAS_LLM_TIMEOUT`, default 300 s). If the model returns invalid JSON it is asked once more with the error; if it still fails, a matching built-in template is used.
+Replies are streamed, and the HUD shows progress (`412 token (46/sn)`). `AIR_CANVAS_LLM_TIMEOUT` (default 180 s) is how long the server may stay **silent**, so a slow but working model is not cut off. With the whole model on the GPU, a 7B model designs in a few seconds. If the HUD says *yavas* (slow), the model is running on the CPU (see Troubleshooting). If the model returns invalid JSON it is asked once more with the error; if it still fails, a matching built-in template is used.
 
 ## Configuration
 
@@ -117,7 +117,7 @@ Local models are slower than Claude: a design can take a few minutes on a CPU (`
 | `AIR_CANVAS_OFFLINE` | `1` = same as `--offline` |
 | `AIR_CANVAS_STT` | `auto` (Google, then Whisper), `google` or `whisper` |
 | `AIR_CANVAS_WHISPER_MODEL` | `small` (or `tiny`/`base`/`medium`, or a local folder) |
-| `AIR_CANVAS_LLM_TIMEOUT` | `300` seconds for a local design |
+| `AIR_CANVAS_LLM_TIMEOUT` | `180` seconds the local model may stay silent during a design |
 | `AIR_CANVAS_CLARIFY` | `1`; `0` = never ask for dimensions before designing |
 
 ## Use as a library
@@ -166,9 +166,11 @@ tests/           pytest suite, synthetic input only
 | --- | --- |
 | "Kamera açılamadı" (camera could not be opened) | Close other apps using the camera (Teams, Zoom, browser tabs) or try `--camera 1`. |
 | `pip` cannot find `mediapipe` | Your Python version may be too new for MediaPipe. Use Python 3.10–3.12. |
-| No sound, or an English accent | Install the voice extras (`pip install -e ".[voice]"`). Edge TTS and gTTS need internet; offline, add the Turkish voice in **Windows Settings → Time & language → Speech**. |
+| No sound, or an English accent | Install the voice extras (`pip install -e ".[voice]"`). Edge TTS and gTTS need internet; offline, the Turkish Windows voice (*Microsoft Tolga*) is used. If it is missing, add it in **Windows Settings → Time & language → Speech**. |
 | Voice commands are not recognized | The assistant now says why: no microphone/`PyAudio`, no internet, or speech not understood. Online recognition uses Google's free web API; for offline use install the `offline` extra (faster-whisper). |
-| The local model is slow or produces nothing | Use a smaller *coder* model, raise `AIR_CANVAS_LLM_TIMEOUT`, and check the LM Studio / Ollama server log. Run with `-v` to see which model was picked. |
+| The local model is slow (HUD: *yavas*, a few tokens per second) | The model is running on the CPU, usually because two models are loaded and GPU memory is full (the log warns about this). In LM Studio keep one model loaded and set *GPU Offload* to max, or run `lms unload --all` then `lms load <model> --gpu max`. On an RTX 4060 (8 GB) this took a 7B coder model from 6 to 46 tokens/s. |
+| The local model produces nothing | Check the LM Studio / Ollama server log, raise `AIR_CANVAS_LLM_TIMEOUT`, and run with `-v` to see which model was picked. |
+| `pip check` reports a `click` conflict | `gTTS` needs `click<8.2`, but newer `huggingface-hub` (pulled in by faster-whisper) needs `click>=8.4`. Install the extras in one command (`pip install -e ".[voice,offline]"`) so pip picks compatible versions, or run `pip install "huggingface-hub<1.0" "click<8.2"`. |
 | Hand model download fails | Download [`hand_landmarker.task`](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task) manually and point `AIR_CANVAS_MODEL` to it. |
 | Lines are shaky | Use even lighting and keep your hand 40–80 cm from the camera. |
 

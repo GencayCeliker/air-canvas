@@ -94,11 +94,11 @@ pip install -e ".[voice,offline]"
 air-canvas --offline
 ```
 
-1. LM Studio (`:1234`) veya Ollama'yı (`:11434`) başlat ve bir model yükle. Tasarım için adında *coder* geçen (ör. `qwen2.5-coder` 7B/14B), `kontrol et` için *VL* bir model (ör. `qwen2.5-vl`) otomatik seçilir; `AIR_CANVAS_LLM_DESIGN_MODEL` / `AIR_CANVAS_LLM_VISION_MODEL` ile değiştirilebilir.
-2. Whisper konuşma modeli (varsayılan `small`) ilk kullanımda **bir kez** indirilir; sonra internet gerekmez. Tamamen internetsiz bir bilgisayar için bir kez internete bağlıyken çalıştır ya da `AIR_CANVAS_WHISPER_MODEL` ile yerel bir model klasörü göster.
-3. Sesli geri bildirim için **Windows Ayarlar → Saat ve dil → Konuşma** bölümünden Türkçe sesi ekle.
+1. LM Studio (`:1234`) veya Ollama'yı (`:11434`) başlat ve bir model yükle. Tasarım için adında *coder* geçen (ör. `qwen2.5-coder` 7B/14B), `kontrol et` için *VL* bir model (ör. `qwen2.5-vl`) otomatik seçilir; `AIR_CANVAS_LLM_DESIGN_MODEL` / `AIR_CANVAS_LLM_VISION_MODEL` ile değiştirilebilir. Sorular ve özetler zaten yüklü olan modeli kullanır; GPU belleğine ikinci bir model alınmaz.
+2. Whisper konuşma modeli (varsayılan `small`) ilk kullanımda **bir kez** indirilir; sonra yerel önbellekten, hiçbir ağ isteği yapılmadan yüklenir. Tamamen internetsiz bir bilgisayar için bir kez internete bağlıyken çalıştır ya da `AIR_CANVAS_WHISPER_MODEL` ile yerel bir model klasörü göster. Whisper'a komut kelimeleri ipucu olarak verilir; bu sayede kısa Türkçe komutlar çok daha güvenilir tanınır.
+3. Sesli geri bildirimde Türkçe Windows sesi (*Microsoft Tolga*) kullanılır; ses yalnızca yeni (OneCore) ses olarak kurulu olsa da çalışır. Ses yoksa **Windows Ayarlar → Saat ve dil → Konuşma** bölümünden ekle.
 
-Yerel modeller Claude'dan yavaştır: işlemcide bir tasarım birkaç dakika sürebilir (`AIR_CANVAS_LLM_TIMEOUT`, varsayılan 300 sn). Model geçersiz JSON döndürürse hatası söylenerek bir kez daha istenir; yine olmazsa uyan yerleşik şablon kullanılır.
+Yanıtlar akış olarak alınır ve HUD'da ilerleme görünür (`412 token (46/sn)`). `AIR_CANVAS_LLM_TIMEOUT` (varsayılan 180 sn), sunucunun **hiç veri göndermeden** bekleyebileceği süredir; yavaş ama çalışan bir model yarıda kesilmez. Model tamamen GPU'daysa 7B bir model birkaç saniyede tasarlar. HUD'da *yavas* yazıyorsa model işlemcide çalışıyor demektir (bkz. Sorun giderme). Model geçersiz JSON döndürürse hatası söylenerek bir kez daha istenir; yine olmazsa uyan yerleşik şablon kullanılır.
 
 ## Ayarlar
 
@@ -117,7 +117,7 @@ Yerel modeller Claude'dan yavaştır: işlemcide bir tasarım birkaç dakika sü
 | `AIR_CANVAS_OFFLINE` | `1` = `--offline` ile aynı |
 | `AIR_CANVAS_STT` | `auto` (önce Google, sonra Whisper), `google` veya `whisper` |
 | `AIR_CANVAS_WHISPER_MODEL` | `small` (veya `tiny`/`base`/`medium` ya da yerel klasör) |
-| `AIR_CANVAS_LLM_TIMEOUT` | yerel tasarım için `300` sn |
+| `AIR_CANVAS_LLM_TIMEOUT` | tasarım sırasında yerel modelin sessiz kalabileceği süre: `180` sn |
 | `AIR_CANVAS_CLARIFY` | `1`; `0` = tasarımdan önce ölçü sorma |
 
 ## Kütüphane olarak kullanım
@@ -166,9 +166,11 @@ tests/           pytest testleri, yalnızca sentetik veri
 | --- | --- |
 | "Kamera açılamadı" | Kamerayı kullanan diğer uygulamaları kapat (Teams, Zoom, tarayıcı sekmeleri) veya `--camera 1` dene. |
 | `pip`, `mediapipe` paketini bulamıyor | Python sürümün MediaPipe için fazla yeni olabilir. Python 3.10–3.12 kullan. |
-| Ses yok veya İngilizce aksanlı | Ses eklerini kur (`pip install -e ".[voice]"`). Edge TTS ve gTTS internet ister; internetsiz kullanım için **Windows Ayarlar → Saat ve dil → Konuşma** bölümünden Türkçe sesi ekle. |
+| Ses yok veya İngilizce aksanlı | Ses eklerini kur (`pip install -e ".[voice]"`). Edge TTS ve gTTS internet ister; internetsiz kullanımda Türkçe Windows sesi (*Microsoft Tolga*) kullanılır. Ses yoksa **Windows Ayarlar → Saat ve dil → Konuşma** bölümünden ekle. |
 | Sesli komutlar algılanmıyor | Asistan artık nedenini söyler: mikrofon/`PyAudio` yok, internet yok ya da konuşma anlaşılamadı. Çevrimiçi tanıma Google'ın ücretsiz servisini kullanır; internetsiz kullanım için `offline` ekini (faster-whisper) kur. |
-| Yerel model yavaş ya da sonuç vermiyor | Daha küçük bir *coder* model kullan, `AIR_CANVAS_LLM_TIMEOUT` değerini artır ve LM Studio / Ollama sunucu kaydına bak. Hangi modelin seçildiğini görmek için `-v` ile çalıştır. |
+| Yerel model yavaş (HUD'da *yavas*, saniyede birkaç token) | Model işlemcide çalışıyor. Çoğunlukla iki model aynı anda yüklüdür ve GPU belleği dolmuştur (logda uyarı çıkar). LM Studio'da tek model yüklü bırak ve *GPU Offload* ayarını en yükseğe çek; ya da `lms unload --all` ardından `lms load <model> --gpu max` çalıştır. RTX 4060 (8 GB) üzerinde 7B coder modeli bu şekilde saniyede 6 token'dan 46 token'a çıktı. |
+| Yerel model sonuç vermiyor | LM Studio / Ollama sunucu kaydına bak, `AIR_CANVAS_LLM_TIMEOUT` değerini artır. Hangi modelin seçildiğini görmek için `-v` ile çalıştır. |
+| `pip check` bir `click` çakışması gösteriyor | `gTTS` `click<8.2` ister; faster-whisper'ın getirdiği yeni `huggingface-hub` ise `click>=8.4` ister. Ekleri tek komutla kur (`pip install -e ".[voice,offline]"`), pip uyumlu sürümleri seçsin; ya da `pip install "huggingface-hub<1.0" "click<8.2"` çalıştır. |
 | El modeli indirilemiyor | [`hand_landmarker.task`](https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task) dosyasını elle indir ve `AIR_CANVAS_MODEL` değişkeniyle yolunu göster. |
 | Çizgiler titriyor | Ortamı eşit aydınlat, elini kameradan 40–80 cm uzakta tut. |
 
