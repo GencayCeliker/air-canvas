@@ -74,6 +74,7 @@ air-canvas --help
 | `N` / `P` | Next / previous design step | `R` | Repeat step |
 | `G` | Show/hide 3D guide | `X` | Export design as STL |
 | `K` | AI checks your drawing | `T` | Ink the design sketch onto the canvas |
+| `I` | Inspect the 3D model (drag / arrow keys rotate, wheel zooms, `Esc` closes) | | |
 
 ## 3D design assistant
 
@@ -83,7 +84,8 @@ Press `V` and say what you want to build. A sentence with *tasarla*, *3D*, or an
    If a dimension that changes the design is missing, the AI asks first (*"Kaç inç pervane kullanacaksın?"*) and then listens for your answer. Say *"sen karar ver"* to use standard sizes or *"vazgeç"* to cancel. Requests that already contain a number are not questioned.
 2. The model appears as a translucent 3D guide under your ink. The current part is highlighted, and the panel on the right shows its instructions and size in millimetres.
 3. Say *"sonraki"* / *"önceki"* / *"tekrar"* to move through the parts, *"kontrol et"* to have the AI look at your drawing, or ask a question (*"duvar kalınlığı kaç olmalı?"*). *"Taslağı çiz"* (or `T`) inks the outline of the design onto the canvas so you can trace it, save it or undo it.
-4. Say *"STL"* (or press `X`). Each part is written as its own STL, lying flat on the bed, together with an assembly preview, `talimatlar.txt` and `tasarim.json`, in `<save dir>/3D/`.
+4. Say *"modeli incele"*, press `I` or the **INCELE** button to inspect the model. Drawing pauses; drag with the mouse or your index finger (or use the arrow keys) to rotate, use the wheel to zoom, `N`/`P` to view one part with its size in millimetres and `R` for the whole assembly. `I` or `Esc` returns to drawing.
+5. Say *"STL"* (or press `X`). Each part is written as its own STL, lying flat on the bed, together with an assembly preview, `talimatlar.txt` and `tasarim.json`, in `<save dir>/3D/`.
 
 **Which AI is used?** With the `ai` extra and an Anthropic credential (`ANTHROPIC_API_KEY` or an `ant auth login` profile), Claude (`claude-opus-5-5`, structured JSON output) designs anything you can describe. Without Claude, a matching built-in template is used first, because small local models tend to return rough boxes and cylinders even for a drone or a bolt. Anything without a template goes to a local LLM (LM Studio / Ollama); a one-part, two-shape answer to anything but a simple container is sent back once. The built-in templates work offline: bolt, nut, drone, drone arm, propeller (inch and blade count from speech, e.g. *"5 inç pervane"*), brushless motor mock-up, car, wheel, fan grill, SSD bracket. Choose explicitly with `--ai auto|claude|local|template`.
 

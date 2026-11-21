@@ -419,26 +419,32 @@ def export_design(design: Design, out_root: str) -> str:
 
 # ─── 3D önizleme (izometrik, gölgeli) ─────────────────────────────────────────
 
-_ISO_COS, _ISO_SIN = math.cos(math.radians(30)), math.sin(math.radians(30))
-_LIGHT = np.array([0.35, 0.55, 1.0]) / np.linalg.norm([0.35, 0.55, 1.0])
-_VIEW = np.array([1.0, 1.0, 1.0]) / math.sqrt(3)
 PART_COLORS = [(80, 170, 255), (120, 220, 120), (255, 170, 90), (200, 130, 255),
                (90, 220, 230), (240, 120, 160), (180, 200, 90), (160, 160, 255)]
 HIGHLIGHT = (40, 200, 255)
 DIM_GRAY = (120, 120, 120)
+DEFAULT_YAW, DEFAULT_PITCH = 45.0, 35.26   # İzometrik bakış (rehberin varsayılanı)
 
 
-def _project(verts: np.ndarray) -> np.ndarray:
-    sx = (verts[:, 0] - verts[:, 1]) * _ISO_COS
-    sy = (verts[:, 0] + verts[:, 1]) * _ISO_SIN - verts[:, 2]
-    return np.stack([sx, sy], axis=1)
+def _camera(yaw: float, pitch: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Ortografik kamera: (sağ, yukarı, izleyiciye doğru) birim vektörleri.
+
+    yaw: izleyicinin Z ekseni etrafındaki açısı; pitch: tabladan yükseklik açısı (derece)."""
+    az, el = math.radians(yaw), math.radians(max(-89.0, min(89.0, pitch)))
+    toward = np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)])
+    right = np.array([-math.sin(az), math.cos(az), 0.0])
+    up = np.cross(toward, right)
+    return right, up, toward
 
 
 def render_preview(design: Design, width: int, height: int, highlight: Optional[int] = None,
-                   only_highlight: bool = False) -> np.ndarray:
-    """Tasarımı gölgeli izometrik görünüm olarak çizer (BGR, siyah arka plan = boş).
+                   only_highlight: bool = False, yaw: float = DEFAULT_YAW, pitch: float = DEFAULT_PITCH,
+                   zoom: float = 1.0, stable_fit: bool = False) -> np.ndarray:
+    """Tasarımı gölgeli ortografik görünüm olarak çizer (BGR, siyah arka plan = boş).
 
     highlight: vurgulanacak parça (diğerleri gri). only_highlight: yalnızca o parçayı çiz.
+    yaw/pitch: bakış açısı, zoom: büyütme. stable_fit: ölçek bakış açısına göre değişmez
+    (döndürürken model büyüyüp küçülmesin diye sınır küresine sığdırılır).
     """
     import cv2  # yerel import: modül OpenCV olmadan da test edilebilsin
 
@@ -450,12 +456,26 @@ def render_preview(design: Design, width: int, height: int, highlight: Optional[
     if not items:
         return img
 
-    all_pts = np.vstack([_project(v) for _, v, _ in items])
-    mins, maxs = all_pts.min(axis=0), all_pts.max(axis=0)
-    span = np.maximum(maxs - mins, 1e-6)
+    right, up, toward = _camera(yaw, pitch)
+    light = 0.3 * right + 0.5 * up + 0.8 * toward
+    light /= np.linalg.norm(light)
+    view = np.stack([right, -up], axis=1)               # 3B → ekran (y aşağı)
+
+    all_v = np.vstack([v for _, v, _ in items])
     margin = 24
-    scale = min((width - 2 * margin) / span[0], (height - 2 * margin) / span[1])
-    offset = np.array([width, height]) / 2 - (mins + maxs) / 2 * scale
+    if stable_fit:
+        center3 = (all_v.min(axis=0) + all_v.max(axis=0)) / 2
+        radius = max(float(np.linalg.norm(all_v - center3, axis=1).max()), 1e-6)
+        scale = min(width - 2 * margin, height - 2 * margin) / (2 * radius)
+        center2 = center3 @ view
+    else:
+        pts = all_v @ view
+        mins, maxs = pts.min(axis=0), pts.max(axis=0)
+        span = np.maximum(maxs - mins, 1e-6)
+        scale = min((width - 2 * margin) / span[0], (height - 2 * margin) / span[1])
+        center2 = (mins + maxs) / 2
+    scale *= max(0.2, min(8.0, zoom))
+    offset = np.array([width, height]) / 2 - center2 * scale
 
     polys, depths, colors = [], [], []
     for idx, verts, tris in items:
@@ -464,19 +484,19 @@ def render_preview(design: Design, width: int, height: int, highlight: Optional[
         lens = np.linalg.norm(normals, axis=1)
         ok = lens > 1e-12
         normals[ok] /= lens[ok, None]
-        visible = ok & (normals @ _VIEW > 0)
+        visible = ok & (normals @ toward > 0)
         if not visible.any():
             continue
-        shade = 0.35 + 0.65 * np.clip(normals[visible] @ _LIGHT, 0, 1)
+        shade = 0.35 + 0.65 * np.clip(normals[visible] @ light, 0, 1)
         if highlight is None:
             base = np.array(PART_COLORS[idx % len(PART_COLORS)], float)
         elif idx == highlight:
             base = np.array(HIGHLIGHT, float)
         else:
             base = np.array(DIM_GRAY, float)
-        pts2d = (_project(tri_v[visible].reshape(-1, 3)) * scale + offset).reshape(-1, 3, 2)
+        pts2d = ((tri_v[visible].reshape(-1, 3) @ view) * scale + offset).reshape(-1, 3, 2)
         polys.append(np.round(pts2d).astype(np.int32))
-        depths.append(tri_v[visible].sum(axis=(1, 2)))   # x+y+z toplamı ≈ izleyiciye yakınlık
+        depths.append(tri_v[visible].sum(axis=1) @ toward)   # izleyiciye yakınlık
         colors.append(shade[:, None] * base[None, :])
     if not polys:
         return img

@@ -87,6 +87,11 @@ BOARD_BG = (32, 28, 28)     # Tahta modu arka planı (BGR)
 # 3D tasarım rehberi: solda yarı saydam model, sağda adım paneli (x1, y1, x2, y2)
 GUIDE_RECT = (20, DRAW_MIN_Y + 40, 860, HUD_TOP - 8)
 PANEL_RECT = (872, DRAW_MIN_Y + 40, FRAME_W - 10, HUD_TOP - 8)
+INSPECT_RECT = (10, DRAW_MIN_Y, 862, HUD_TOP - 8)   # İnceleme modunda 3D modelin alanı
+INSPECT_DEG_PER_PX = 0.45                              # Sürükleme hassasiyeti (derece / piksel)
+# cv2.waitKeyEx ok tuşu kodları (Windows, GTK/X11): sol, sağ, yukarı, aşağı
+ARROW_KEYS = {2424832: "left", 2555904: "right", 2490368: "up", 2621440: "down",
+              65361: "left", 65363: "right", 65362: "up", 65364: "down"}
 GUIDE_ALPHA = 0.55
 
 # Tasarım modu sesli komutları
@@ -104,11 +109,11 @@ PALETTE: List[Tuple[str, Tuple[int, int, int]]] = [
 ]
 
 TOOLBAR_IDS = [f"color_{i}" for i in range(len(PALETTE))] + [
-    "eraser", "shape", "board", "clear", "undo", "save", "voice",
+    "eraser", "shape", "board", "clear", "undo", "save", "inspect", "voice",
 ]
 
 # El hareketiyle basılan butonlarda tekrar tetiklenmeyi önleyen bekleme süreleri (sn)
-BUTTON_COOLDOWNS = {"shape": 0.8, "board": 0.8, "clear": 0.8, "undo": 0.6, "save": 1.0, "voice": 1.5}
+BUTTON_COOLDOWNS = {"shape": 0.8, "board": 0.8, "inspect": 0.8, "clear": 0.8, "undo": 0.6, "save": 1.0, "voice": 1.5}
 
 VOICE_COLORS = [
     (("mavi",), 0),
@@ -268,6 +273,11 @@ class AirCanvas:
         self._answer_until = 0.0
         self._clarify_request = ""         # AI ölçü sorduysa cevabı beklenen tasarım isteği
         self._clarify_until = 0.0
+        # İnceleme modu: tasarımın 3D modeli büyük gösterilir, sürükleyerek döndürülür; çizim yapılmaz.
+        self.inspecting = False
+        self.inspect_yaw, self.inspect_pitch, self.inspect_zoom = 45.0, 30.0, 1.0
+        self._inspect_drag: Optional[Tuple[int, int]] = None   # Sürüklemenin son noktası (fare veya parmak)
+        self._inspect_cache: Optional[Tuple[Any, np.ndarray]] = None
 
         # Çevrimdışı mod: yerel LLM + Whisper + yerel ses; Claude, Google ve Edge TTS kullanılmaz.
         if offline is None:
@@ -548,6 +558,12 @@ class AirCanvas:
             if has("vazgeç", "vazgec", "boşver", "bosver", "iptal"):
                 return [("design_cancel", None)], "Tamam, tasarımdan vazgeçtim."
             return [("design_answer", text)], "Teşekkürler, tasarlıyorum."
+
+        # ── İnceleme modu ("incele" ≠ fırçayı "incelt") ──
+        if any(t.startswith("incele") for t in tokens):
+            if has("kapat", "bitir", "çık", "cik", "kaldır", "kaldir"):
+                return [("inspect_set", False)], ""
+            return [("inspect_set", True)], ""
 
         # ── 3D tasarım komutları ──
         if self.design is not None:
@@ -880,7 +896,16 @@ class AirCanvas:
         elif action == "design_close":
             self.design = None
             self._guide = None
+            self.inspecting = False
             self.assistant_tip = "Tasarim kapatildi."
+        elif action == "inspect_toggle":
+            self._set_inspect(not self.inspecting)
+        elif action == "inspect_set":
+            self._set_inspect(bool(value))
+        elif action == "inspect_rotate":
+            self._rotate_inspect(*value)
+        elif action == "inspect_zoom":
+            self.inspect_zoom = float(min(6.0, max(0.3, self.inspect_zoom * float(value))))
         elif action == "ask":
             self._ask_async(str(value))
 
@@ -898,11 +923,20 @@ class AirCanvas:
             mapping = {
                 "eraser": "eraser", "shape": "shape_toggle", "board": "board_toggle",
                 "clear": "clear", "undo": "undo", "save": "save", "voice": "voice",
+                "inspect": "inspect_toggle",
             }
             if button_id in mapping:
                 self._perform(mapping[button_id])
 
     def _handle_key(self, key: int) -> None:
+        arrow = ARROW_KEYS.get(key)
+        if arrow:
+            if self.inspecting:
+                step = 15.0
+                self._rotate_inspect(*{"left": (-step, 0.0), "right": (step, 0.0),
+                                       "up": (0.0, step), "down": (0.0, -step)}[arrow])
+            return
+        key &= 0xFF
         char = chr(key).lower() if 0 <= key < 256 else ""
         key_actions = {
             "v": "voice", "z": "undo", "y": "redo", "c": "clear", "s": "save",
@@ -912,8 +946,11 @@ class AirCanvas:
         key_actions.update({
             "f": "fullscreen_toggle", "n": "design_next", "p": "design_prev", "r": "design_repeat",
             "g": "guide_toggle", "x": "design_export", "k": "design_review", "t": "design_ink",
+            "i": "inspect_toggle",
         })
-        if char in key_actions:
+        if self.inspecting and char == "r":
+            self._perform("design_overview")   # İncelemede R: tüm montaj
+        elif char in key_actions:
             self._perform(key_actions[char])
         elif char == "e":
             self._perform("pen" if self.eraser else "eraser")
@@ -1040,6 +1077,73 @@ class AirCanvas:
         failed = f" Üretilemeyen parça: {', '.join(design.failed_parts)}." if design.failed_parts else ""
         self.assistant_tip = f"Tasarim hazir ({source}): {design.name}. 'Sonraki' ile ilerleyin, 'STL' ile kaydedin."
         self._say_async(f"{design.name} hazır. {design.summary}{failed} {design.spoken_step(0)}", wait=True)
+
+    def _set_inspect(self, on: bool) -> None:
+        if on and self.design is None:
+            self.inspecting = False
+            self.assistant_tip = "Incelenecek tasarim yok. Ornek: 'dron tasarla'."
+            self._say_async("Önce bir tasarım isteyin, örneğin dron tasarla.")
+            return
+        if on and self._stroke_owner:
+            self._end_stroke()
+        self.inspecting = on
+        self._inspect_drag = None
+        if on:
+            self.inspect_yaw, self.inspect_pitch, self.inspect_zoom = 45.0, 30.0, 1.0
+            self.assistant_tip = "Inceleme: surukle = dondur, tekerlek = yakinlastir, N/P = parca, I/ESC = kapat."
+        else:
+            self.assistant_tip = "Inceleme kapandi, cizime devam."
+
+    def _rotate_inspect(self, d_yaw: float, d_pitch: float) -> None:
+        self.inspect_yaw = (self.inspect_yaw + d_yaw) % 360.0
+        self.inspect_pitch = float(min(89.0, max(-89.0, self.inspect_pitch + d_pitch)))
+
+    def _drag_inspect(self, x: int, y: int) -> None:
+        """Sürükleme: yatay hareket modeli kendi ekseninde çevirir, dikey hareket üstten/alttan bakışa geçirir."""
+        if self._inspect_drag is not None:
+            px, py = self._inspect_drag
+            self._rotate_inspect(-(x - px) * INSPECT_DEG_PER_PX, (y - py) * INSPECT_DEG_PER_PX)
+        self._inspect_drag = (x, y)
+
+    def _inspect_image(self) -> np.ndarray:
+        from .design import render_preview
+        x1, y1, x2, y2 = INSPECT_RECT
+        part = self.design_step if self.design_step >= 0 else None
+        key = (id(self.design), part, round(self.inspect_yaw, 1), round(self.inspect_pitch, 1),
+               round(self.inspect_zoom, 3))
+        if self._inspect_cache is None or self._inspect_cache[0] != key:
+            img = render_preview(self.design, x2 - x1, y2 - y1, highlight=part, only_highlight=part is not None,
+                                 yaw=self.inspect_yaw, pitch=self.inspect_pitch, zoom=self.inspect_zoom,
+                                 stable_fit=True)
+            self._inspect_cache = (key, img)
+        return self._inspect_cache[1]
+
+    def _draw_inspect(self, img: np.ndarray) -> None:
+        """Modeli koyu zemin üzerinde büyük gösterir; üstte parça ölçüsü, altta kullanım ipucu."""
+        if not self.inspecting or self.design is None:
+            return
+        x1, y1, x2, y2 = INSPECT_RECT
+        roi = img[y1:y2, x1:x2]
+        model = self._inspect_image()
+        mask = model.any(axis=2)
+        cv2.addWeighted(np.full_like(roi, (30, 24, 20)), 0.96, roi, 0.04, 0, dst=roi)
+        roi[mask] = model[mask]
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 200, 255), 1)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        design = self.design
+        if self.design_step >= 0:
+            i = self.design_step
+            sx, sy, sz = design.part_size(i)
+            qty = design.quantity(i)
+            title = (f"{i + 1}/{len(design.parts)} {self._tr_ascii(design.parts[i]['name'])}"
+                     f"  {sx:.1f} x {sy:.1f} x {sz:.1f} mm" + (f"  x{qty} adet" if qty > 1 else ""))
+        else:
+            title = f"Montaj: {self._tr_ascii(design.name)}  ({len(design.parts)} parca)"
+        cv2.putText(img, title[:80], (x1 + 12, y1 + 24), font, 0.6, (0, 220, 255), 2)
+        cv2.putText(img, f"Aci {self.inspect_yaw:.0f} / {self.inspect_pitch:.0f}  Yakinlik x{self.inspect_zoom:.1f}",
+                    (x1 + 12, y2 - 30), font, 0.45, (200, 200, 200), 1)
+        cv2.putText(img, "Surukle/oklar: dondur | Tekerlek: yakinlastir | N/P: parca, R: montaj | I/ESC: kapat",
+                    (x1 + 12, y2 - 10), font, 0.45, (200, 200, 200), 1)
 
     def _refresh_guide(self) -> None:
         if self.design is None:
@@ -1591,6 +1695,18 @@ class AirCanvas:
             self._hand_overlay = (lm, "select")
             return
 
+        if self.inspecting:
+            # İnceleme modu: işaret parmağı sürükleyerek modeli döndürür, çizim yapılmaz.
+            if self._stroke_owner == "hand":
+                self._end_stroke()
+            if up["index"]:
+                self._drag_inspect(ix, iy)
+                self._hand_overlay = (lm, "select")
+            else:
+                self._inspect_drag = None
+                self._hand_overlay = (lm, "idle")
+            return
+
         if up["index"]:
             # Çizim modu
             self._hand_overlay = (lm, "draw")
@@ -1656,6 +1772,7 @@ class AirCanvas:
             "clear": ("TEMIZLE", (60, 60, 180), False),
             "undo": ("GERI AL", (140, 90, 40), False),
             "save": ("KAYDET", (200, 200, 200), False),
+            "inspect": ("INCELE", (90, 120, 30) if self.inspecting else (70, 70, 70), self.inspecting),
             "voice": ("DINLIYOR" if self.voice_listening else "SESLI (V)",
                       (0, 140, 255) if self.voice_listening else (140, 45, 190), False),
         }
@@ -1757,7 +1874,7 @@ class AirCanvas:
             "[V] Sesli komut  |  [Z/Y] Geri/Ileri  |  [C] Temizle  |  [S] Kaydet  |  [B] Tahta  |  [E] Silgi  |  "
             "[+/-] Kalinlik  |  [1-6] Renk  |  [H] Panel  |  [Q] Cikis",
             "3D: 'dron tasarla', 'M3 vida ciz'...  |  [N/P] Sonraki/Onceki adim  |  [R] Tekrar  |  [G] Rehber  |  "
-            "[T] Taslak  |  [X] STL  |  [K] Kontrol et  |  [F] Tam ekran",
+            "[T] Taslak  |  [X] STL  |  [K] Kontrol  |  [I] Incele  |  [F] Tam ekran",
         )
         for i, line in enumerate(hints):
             cv2.putText(img, line, (22, HUD_TOP + 76 + i * 18), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (210, 215, 230), 1)
@@ -1856,6 +1973,22 @@ class AirCanvas:
         return delta - 0x10000 if delta >= 0x8000 else delta
 
     def _on_mouse(self, event, x, y, flags, param) -> None:
+        if self.inspecting:
+            if event == cv2.EVENT_LBUTTONDOWN:
+                button_id = self._button_at(x, y)
+                if button_id:
+                    self._press_button(button_id)
+                else:
+                    self._inspect_drag = (x, y)
+            elif event == cv2.EVENT_MOUSEMOVE and self._inspect_drag is not None:
+                self._drag_inspect(x, y)
+            elif event == cv2.EVENT_LBUTTONUP:
+                self._inspect_drag = None
+            elif event == cv2.EVENT_MOUSEWHEEL:
+                delta = self._wheel_delta(flags)
+                if delta:
+                    self._perform("inspect_zoom", 1.15 if delta > 0 else 1 / 1.15)
+            return
         if event == cv2.EVENT_LBUTTONDOWN:
             button_id = self._button_at(x, y)
             if button_id:
@@ -1901,6 +2034,8 @@ class AirCanvas:
         self._hand_overlay = None
         self._last_view = None
         self._session_saves = 0
+        self.inspecting = False
+        self._inspect_drag = None
         while not self._actions.empty():
             try:
                 self._actions.get_nowait()
@@ -1981,6 +2116,7 @@ class AirCanvas:
                     self._apply_window_mode(win_name)
 
                 view = self._compose(frame)
+                self._draw_inspect(view)
                 self._draw_hand_overlay(view)
                 self._draw_toolbar(view)
 
@@ -1993,12 +2129,17 @@ class AirCanvas:
                 self._last_view = view
 
                 cv2.imshow(win_name, view)
-                key = cv2.waitKey(1)
+                key = cv2.waitKeyEx(1)   # Ex: inceleme modunda ok tuşları da gelir
                 if key != -1:
-                    key &= 0xFF
-                    if key in (ord('q'), ord('Q'), 27):
+                    low = key & 0xFF
+                    if key in ARROW_KEYS:
+                        self._handle_key(key)
+                    elif low == 27 and self.inspecting:
+                        self._perform("inspect_set", False)   # ESC önce incelemeyi kapatır
+                    elif low in (ord('q'), ord('Q'), 27):
                         break
-                    self._handle_key(key)
+                    else:
+                        self._handle_key(key)
 
                 try:
                     if cv2.getWindowProperty(win_name, cv2.WND_PROP_VISIBLE) < 1:

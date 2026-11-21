@@ -293,3 +293,71 @@ def test_queued_design_and_fullscreen_toggle(canvas):
     assert canvas.fullscreen is True
     canvas._handle_key(ord("f"))
     assert canvas.fullscreen is False and canvas._window_dirty
+
+
+# ─── İnceleme modu (#23) ─────────────────────────────────────────────────────
+
+def test_preview_rotates_and_is_not_mirrored():
+    design = dsg.Design(dsg.match_template("araba"))
+    front = dsg.render_preview(design, 300, 200, yaw=0, pitch=0, stable_fit=True)
+    side = dsg.render_preview(design, 300, 200, yaw=90, pitch=0, stable_fit=True)
+    # Önden (+X) bakınca tekerleklerle ~90 mm genişlik, yandan (+Y) bakınca 130 mm uzunluk görünür.
+    assert np.any(side, axis=(0, 2)).sum() > 1.3 * np.any(front, axis=(0, 2)).sum()
+    # Sağ el kuralı: +Y'den bakınca +X ekranda solda kalır.
+    plate = {"name": "L", "parts": [{"name": "p", "shapes": [
+        dsg._s("box", (40, 10, 10), (20, 0, 5)), dsg._s("box", (10, 10, 30), (35, 0, 15))]}]}
+    img = dsg.render_preview(dsg.Design(plate), 200, 200, yaw=90, pitch=0)
+    tall = np.any(img[:60], axis=(0, 2)).nonzero()[0]     # yalnızca yüksek kutunun tepesi
+    assert tall.mean() < 100
+
+
+def test_inspect_mode_rotates_with_mouse_and_never_draws(canvas):
+    canvas._perform("inspect_toggle")
+    assert not canvas.inspecting                             # tasarım yokken açılmaz
+    canvas._on_design_loaded(dsg.Design(dsg.match_template("dron")), "sablon", "dron")
+    canvas._handle_key(ord("i"))
+    assert canvas.inspecting
+    yaw, pitch = canvas.inspect_yaw, canvas.inspect_pitch
+    canvas._on_mouse(cv2.EVENT_LBUTTONDOWN, 300, 300, 0, None)
+    canvas._on_mouse(cv2.EVENT_MOUSEMOVE, 400, 260, cv2.EVENT_FLAG_LBUTTON, None)
+    canvas._on_mouse(cv2.EVENT_LBUTTONUP, 400, 260, 0, None)
+    assert canvas.inspect_yaw != yaw and canvas.inspect_pitch < pitch
+    assert not canvas.canvas.any()                           # sürükleme çizgi bırakmaz
+    canvas._handle_key(2555904)                              # sağ ok
+    canvas._on_mouse(cv2.EVENT_MOUSEWHEEL, 300, 300, 120 << 16, None)
+    assert canvas.inspect_zoom > 1.0
+
+    view = np.zeros((ac.FRAME_H, ac.FRAME_W, 3), np.uint8)
+    canvas._draw_inspect(view)
+    x1, y1, x2, y2 = ac.INSPECT_RECT
+    assert view[y1:y2, x1:x2].any()
+    canvas._handle_key(ord("n"))                             # tek parça görünümü
+    one = canvas._inspect_image()
+    canvas._handle_key(ord("r"))                             # incelemede R: tüm montaj
+    assert canvas.design_step == -1 and canvas._inspect_image().any() and one.any()
+    canvas._handle_key(ord("i"))
+    assert not canvas.inspecting
+
+
+def test_inspect_mode_hand_drag_rotates_instead_of_drawing(canvas):
+    canvas._on_design_loaded(dsg.Design(dsg.match_template("vida")), "sablon", "vida")
+    canvas._perform("inspect_set", True)
+    hand = [[i, 600, 500] for i in range(21)]
+    for tip, pip in ((8, 6), (12, 10), (16, 14), (20, 18)):
+        hand[pip][2] = 500
+    hand[8] = [8, 500, 300]                                  # yalnız işaret parmağı yukarıda
+    hand[6] = [6, 500, 400]
+    yaw = canvas.inspect_yaw
+    canvas._process_hand(hand)
+    hand[8] = [8, 560, 300]
+    canvas._process_hand(hand)
+    assert canvas.inspect_yaw != yaw and canvas._stroke_owner is None and not canvas.canvas.any()
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("modeli incele", ("inspect_set", True)),
+    ("incelemeyi kapat", ("inspect_set", False)),
+    ("fırçayı incelt", ("brush_down", None)),
+])
+def test_voice_inspect_commands(canvas, text, expected):
+    assert canvas._parse_voice_command(text)[0][0] == expected
