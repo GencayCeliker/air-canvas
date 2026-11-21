@@ -206,6 +206,10 @@ tests/           pytest testleri, yalnızca sentetik veri
 - [x] Yerel modelle tasarım ve çevrimdışı mod
 - [ ] SVG olarak dışa aktarma
 
+## Yapay zekâ desteği
+
+Bu proje, yapay zekâ kodlama asistanı Claude'dan (Anthropic) yoğun destek alınarak geliştirildi; kodun tamamı sıfırdan elle yazılmadı. Fikir, gereksinimler, gerçek donanımda test (webcam, mikrofon, LM Studio ile RTX 4060), ölçümler, hataları yakalayıp düzeltmeleri yönlendirmek bana aitti.
+
 ## Katkıda bulunma
 
 Issue ve pull request'ler memnuniyetle karşılanır — bkz. [CONTRIBUTING.md](CONTRIBUTING.md). Değişiklikler [CHANGELOG.md](CHANGELOG.md) dosyasında listelenir.

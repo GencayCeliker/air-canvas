@@ -206,6 +206,10 @@ tests/           pytest suite, synthetic input only
 - [x] Local model designs and offline mode
 - [ ] Export as SVG
 
+## AI assistance
+
+This project was built with substantial help from an AI coding assistant, Claude (Anthropic); not all of the code was written by hand from scratch. The idea, the requirements, testing on real hardware (webcam, microphone, RTX 4060 with LM Studio), the measurements, and catching and steering the fixes were my part.
+
 ## Contributing
 
 Issues and pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
